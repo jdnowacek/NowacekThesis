@@ -1,0 +1,6 @@
+---
+title: "Planning"
+format: html
+---
+
+Document for outlining the loop code to get a design-based estimate of variance from point transect distance sampling simulation. 
