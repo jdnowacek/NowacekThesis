@@ -379,4 +379,4 @@ bootstrap <- get_bootstrap(
   sigma_hat = fit$sigma_hat
 )
 
-sd(bootstrap$N_hat)
+sd(bootstrap$N_hat) 
