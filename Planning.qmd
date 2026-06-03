@@ -3,7 +3,7 @@ title: "Planning"
 format: html
 ---
 
-# Goal
+Goal: 
 
 Document for outlining the loop code to get a design-based estimate of variance from point transect distance sampling simulation.
 
@@ -16,6 +16,8 @@ library(dsm)
 library(sf)
 library(mgcv)
 ```
+
+# Overview
 
 ## Step 1
 
@@ -47,11 +49,12 @@ library(mgcv)
 
 - Repeat step 4 for N simulations
 
-## First Attempt
+# Code
+
+## Create Survey Object
 
 ```{r}
 # Create the survey region object
-
 simsquare <- st_bbox(c(xmin = 0, xmax = 10000, ymin = 0, ymax = 10000)) |> 
   st_as_sfc() |> 
   st_as_sf()
@@ -62,6 +65,10 @@ region <- make.region(region.name = "simsquare",
                       units = "m")
 plot(region)
 ```
+
+## Create Density
+
+Generating a density in this analysis is similar to the paper's method, that needs a density too.
 
 ```{r}
 # We first create a flat density grid
@@ -89,6 +96,11 @@ density_true <- add.hotspot(object = density_true,
 plot(density_true, region, scale = 0.001)
 ```
 
+
+### Density GAM
+
+boxlet smoothing instead of striplet smoothing
+
 ```{r}
 density_true.data <- density_true@density.surface[[1]]
 
@@ -102,7 +114,9 @@ gam.density_true <- make.density(region = region,
 plot(gam.density_true, region, scale = 0.001)
 ```
 
-### Animal position (poisson process)
+## Population generation
+
+Same as paper
 
 ```{r}
 # Define the population description
@@ -118,7 +132,9 @@ detect_true <- make.detectability(key.function = "hn",
 pop_true <- generate.population(object = pop.desc_true, detect_true, region = region)
 ```
 
-### Generate the study grid and design
+## Design transects
+
+points instead of lines, random starting point with a fixed angle.
 
 ```{r}
 point.design_our_survey <- make.design(region = region, 
@@ -133,7 +149,9 @@ p.survey_our_survey <- generate.transects(point.design_our_survey)
 plot(region, p.survey_our_survey)
 ```
 
-### collect data
+### Design Analyses
+
+we were unsure why we needed to give detectability
 
 ```{r}
 # Create the detectability description
@@ -145,7 +163,11 @@ detect_our_survey <- make.detectability(key.function = "hn",
 plot(detect_our_survey, pop.desc_true)
 ```
 
+Now that I look at this, this doesnt look right for points...
 
+
+
+These set up the analysis models for each sim run
 
 ```{r}
 analyses_our_survey <- make.ds.analysis(dfmodel = ~ 1,
@@ -154,6 +176,8 @@ analyses_our_survey <- make.ds.analysis(dfmodel = ~ 1,
                              er.var = "P3",
                              criteria = "AIC")
 ```
+
+Sets up the sim
 
 ```{r}
 sim.point_our_survey <- make.simulation(reps = 1,
@@ -167,11 +191,15 @@ sim.point_our_survey <- make.simulation(reps = 1,
 # our_survey <- run.simulation(sim.point_our_survey)
 ```
 
+Runs the survey to get data points for the animals, representing the "true" sample
+
 ```{r}
 our_survey <- run.survey(sim.point_our_survey)
 ```
 
 ### Fit to those data
+
+fit to create the sim surface
 
 ```{r}
 m1 <- ds(data = our_survey@dist.data,
@@ -182,6 +210,8 @@ m1 <- ds(data = our_survey@dist.data,
 summary(m1)
 ```
 
+stores estiamtes
+
 ```{r}
 n_hat <- m1$dht$individuals$N$Estimate
 
@@ -189,6 +219,8 @@ sigma_hat <- coef(m1$ddf)
 ```
 
 #### density surface estimation
+
+fits a density surface model from those data by converting the model outputs from m1 into the surface.
 
 ```{r}
 # dsm(count ~ s(x, y), ddf.obj = m1$ddf)
