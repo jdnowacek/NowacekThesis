@@ -7,6 +7,11 @@ Goal:
 
 Document for outlining the loop code to get a design-based estimate of variance from point transect distance sampling simulation.
 
+Notes: 
+  - our survey means the survey and analysis from the theoretical density, theoretical population, and the survey we conduct on that population
+
+# Packages
+
 ```{r, message= F}
 library(tidyverse)
 library(dsims)
@@ -17,9 +22,7 @@ library(sf)
 library(mgcv)
 ```
 
-# Overview
-
-## Step 1
+Step 1
 
 - based mostly on https://distancesampling.org/dsims/articles/GettingStarted.html 
 
@@ -29,29 +32,31 @@ library(mgcv)
 
 - using dsims
 
-## Step 2
+Step 2
 
 - produce a set of individual animal locations probabilistically from that density surface
 
 - using dsims?
 
-## Step 3 
+Step 3 
 
 - estimate a density surface from that set of points
 
 - using?
 
-## Step 4
+Step 4
 
 - produce a set of detections from that density surface, analyze with half-normal detection ftn with no covariates
 
-## Step 5 
+Step 5 
 
 - Repeat step 4 for N simulations
 
-# Code
+# Theoretical Population
 
-## Create Survey Object
+## Create survey object
+
+This will be common to all analyses in this doc, just the survey grid
 
 ```{r}
 # Create the survey region object
@@ -66,9 +71,11 @@ region <- make.region(region.name = "simsquare",
 plot(region)
 ```
 
-## Create Density
+## Create theoretical density
 
 Generating a density in this analysis is similar to the paper's method, that needs a density too.
+
+This serves as the theoretical true density of animals in our study area
 
 ```{r}
 # We first create a flat density grid
@@ -96,33 +103,34 @@ density_true <- add.hotspot(object = density_true,
 plot(density_true, region, scale = 0.001)
 ```
 
-
 ### Density GAM
+
+optional step that smooths out the density using a GAM, not needed
 
 boxlet smoothing instead of striplet smoothing
 
 ```{r}
-density_true.data <- density_true@density.surface[[1]]
-
-fit.gam <- gam(density ~ s(x,y), data = density_true.data, family = gaussian(link="log"))
-
-# Use the gam object to create a density object
-gam.density_true <- make.density(region = region,
-                            x.space = 500,
-                            fitted.model = fit.gam)
-
-plot(gam.density_true, region, scale = 0.001)
+# density_true.data <- density_true@density.surface[[1]]
+# 
+# fit.gam <- gam(density ~ s(x,y), data = density_true.data, family = gaussian(link="log"))
+# 
+# # Use the gam object to create a density object
+# gam.density_true <- make.density(region = region,
+#                             x.space = 500,
+#                             fitted.model = fit.gam)
+# 
+# plot(gam.density_true, region, scale = 0.001)
 ```
 
 ## Population generation
 
-Same as paper
+generate the population from the density we just created
 
 ```{r}
-# Define the population description
 pop.desc_true <- make.population.description(region = region,
-                                        density = gam.density_true,
-                                        N = 1000,
+                                        density = density_true,
+                                        # density = gam.density_true,
+                                        N = 5000,
                                         fixed.N = TRUE)
 
 detect_true <- make.detectability(key.function = "hn",
@@ -130,7 +138,13 @@ detect_true <- make.detectability(key.function = "hn",
                              truncation = 750)
 
 pop_true <- generate.population(object = pop.desc_true, detect_true, region = region)
+
+plot(pop_true, region)
 ```
+
+Note: The next chunks (Design transects through run survey) have some redundancies to fitting the m1 models, this is because dsims machinery is expecting a simulation, we need those objects later. m1 generates an N_hat 
+
+# Survey Design
 
 ## Design transects
 
@@ -140,7 +154,7 @@ points instead of lines, random starting point with a fixed angle.
 point.design_our_survey <- make.design(region = region, 
                             transect.type = "point",
                             design = "systematic",
-                            spacing = 1500,
+                            spacing = 750,
                             edge.protocol = "minus",
                             design.angle = 65,
                             truncation = 750)
@@ -149,7 +163,7 @@ p.survey_our_survey <- generate.transects(point.design_our_survey)
 plot(region, p.survey_our_survey)
 ```
 
-### Design Analyses
+## Specify detectability
 
 we were unsure why we needed to give detectability
 
@@ -162,12 +176,9 @@ detect_our_survey <- make.detectability(key.function = "hn",
 # Plot the simulation detection functions
 plot(detect_our_survey, pop.desc_true)
 ```
+## Specify ds() model
 
-Now that I look at this, this doesnt look right for points...
-
-
-
-These set up the analysis models for each sim run
+These set up the distance sampling analysis model for the theoretical survey
 
 ```{r}
 analyses_our_survey <- make.ds.analysis(dfmodel = ~ 1,
@@ -177,7 +188,9 @@ analyses_our_survey <- make.ds.analysis(dfmodel = ~ 1,
                              criteria = "AIC")
 ```
 
-Sets up the sim
+## Set up simulation object
+
+Sets up the simulation run that generates our survey sample
 
 ```{r}
 sim.point_our_survey <- make.simulation(reps = 1,
@@ -191,55 +204,69 @@ sim.point_our_survey <- make.simulation(reps = 1,
 # our_survey <- run.simulation(sim.point_our_survey)
 ```
 
+## Run our survey
+
 Runs the survey to get data points for the animals, representing the "true" sample
 
 ```{r}
 our_survey <- run.survey(sim.point_our_survey)
+
+plot(our_survey, region)
 ```
 
-### Fit to those data
 
-fit to create the sim surface
+## Fit to theoretical survey data (ds())
+
+fit to create the sim surface to estimate an abundance, and a sigma
 
 ```{r}
 m1 <- ds(data = our_survey@dist.data,
          transect = "point",
          key = "hn",
-         adjustment = NULL) 
+         adjustment = NULL)
 
 summary(m1)
 ```
 
-stores estiamtes
+stores estimates
 
 ```{r}
-n_hat <- m1$dht$individuals$N$Estimate
+n_hat_our_survey <- m1$dht$individuals$N$Estimate
 
-sigma_hat <- coef(m1$ddf)
+sigma_hat_our_survey <- coef(m1$ddf)
+scaled_sigma_hat_our_survey <- exp(sigma_hat_our_survey$scale["(Intercept)", "estimate"])
 ```
 
-#### density surface estimation
+# Create estimated density
 
-fits a density surface model from those data by converting the model outputs from m1 into the surface.
+Density surface estimation
+
+uses some data wrangling to turn objects from our_survey, and from m1, into data objects that can be put into a dsm object.
+
+fits a density surface model with dsm from those data by converting the model outputs from m1 into the surface.
 
 ```{r}
 # dsm(count ~ s(x, y), ddf.obj = m1$ddf)
 ```
 
+## Data wrangling
+
 ```{r}
-obsdata <- our_survey@dist.data |>
-  filter(!is.na(distance)) |>
+our_survey_dist_data <- our_survey@dist.data
+
+obsdata <- our_survey@dist.data |> # data from survey of our_survey
+  filter(!is.na(distance)) |> # filters out non-detections 
   mutate(
-    object = as.character(object),
-    Sample.Label = as.character(Sample.Label),
-    size = 1
+    object = as.character(object), # converts detection label to character
+    Sample.Label = as.character(Sample.Label), # converts individual label to character
+    size = 1 # assigns group size 1, assumes individual animals
   ) |>
   select(object, Sample.Label, size, distance)
  
 # all point transect locations
 
-samplers <- our_survey@transect@samplers
-sampler_xy <- sf::st_coordinates(samplers)
+samplers <- our_survey@transect@samplers # pulls location of point transects
+sampler_xy <- sf::st_coordinates(samplers) # puts x and y coords of each point into a two-column matrix
 segdata <- samplers |>
   sf::st_drop_geometry() |>
   mutate(
@@ -248,8 +275,13 @@ segdata <- samplers |>
     x = sampler_xy[, "X"],
     y = sampler_xy[, "Y"]
   ) |>
-  select(Sample.Label, Effort, x, y)
- 
+  select(Sample.Label, Effort, x, y) # creates a dataset to be fed into dsm
+                                      # includes sample label, effort, x, and y
+```
+
+## Fit density model
+
+```{r}
 # density surface model
 
 dsm1 <- dsm(
@@ -259,15 +291,61 @@ dsm1 <- dsm(
   observation.data = obsdata,
   family = quasipoisson(link = "log"),
   method = "REML",
-  convert.units = 1)
+  convert.units = 1) # uses ds model, segment data, and obsdata to fit a density surface to the observations from our survey
  
 summary(dsm1)
 
 class(dsm1)
+
+plot(dsm1)
 ```
 need abundance, density, detection ftn parameters
 
-## Simulation 
+## Generate estimated density
+
+This chunk uses the dsm1 model to create a new predicted density
+  - this seems like a source of error that might contribute to the discrepancy between our calculated SEs from the boostrap and the fewster expectations
+  
+
+```{r}
+pred_grid <- density_true@density.surface[[1]] |>
+  mutate(area = as.numeric(sf::st_area(geometry))) 
+# pulls the study area geometry from the true density as a scaffolding
+
+pred_data <- sf::st_drop_geometry(pred_grid)
+# adds the area of each cell to that scaffolding
+ 
+pred_grid$Nhat <- predict(
+  dsm1,
+  newdata = pred_data,
+  off.set = pred_grid$area,
+  type = "response"
+)
+# predicts the abundance in each cell from the dsm1 model, which is based on our_survey
+ 
+dsm_surface <- pred_grid |>
+  mutate(density = pmax(Nhat / area, .Machine$double.eps)) |>
+  select(strata, density, x, y, geometry)
+# converts abundance into density
+ 
+dsm_density <- make.density(
+  region = region,
+  x.space = 500,
+  y.space = 500,
+  density.surface = dsm_surface
+)
+# rebuilds a density object based on our model predictions
+ 
+plot(dsm_density, region, scale = 0.001)
+```
+
+### status
+
+now we have an estimated density surface from 'our survey' that comes from the theoretical true density and population
+
+This density can now be used to create iterations of theoretical populations, these simulate the theoretical populations that can be generated during real analysis.
+
+# Simulation framework
 
 region is already created
 
@@ -312,86 +390,48 @@ density should come from dsm1:
 # # plot(dsm_density, region, scale = 0.001)
 ```
 
-```{r}
-pred_grid <- density_true@density.surface[[1]] |>
-  mutate(area = as.numeric(sf::st_area(geometry)))
- 
-pred_data <- sf::st_drop_geometry(pred_grid)
- 
-pred_grid$Nhat <- predict(
-  dsm1,
-  newdata = pred_data,
-  off.set = pred_grid$area,
-  type = "response"
-)
- 
-dsm_surface <- pred_grid |>
-  mutate(density = pmax(Nhat / area, .Machine$double.eps)) |>
-  select(strata, density, x, y, geometry)
- 
-dsm_density <- make.density(
-  region = region,
-  x.space = 500,
-  y.space = 500,
-  density.surface = dsm_surface
-)
- 
-plot(dsm_density, region, scale = 0.001)
-```
- 
-If you only use the surface with `fixed.N = TRUE`, absolute scale does not matter; only relative cell weights matter. If you want a plot comparable to `density_true`, rescale for plotting/comparison, but do not confuse that with physical density:
+## Create dsims density
+
+uses the density we generated with the dsm model to create a density object we can use in a dsims run
  
 ```{r}
-dsm_surface_plot <- dsm_surface |>
-  mutate(density = density * sum(density_true@density.surface[[1]]$density) / sum(density))
-```
- 
-One more review note: `coef(m1$ddf)` is on the link scale. Your half-normal scale estimate is approximately:
- 
-```{r}
-sigma_hat <- exp(coef(m1$ddf)$scale["(Intercept)", "estimate"])
-```
- 
-In my run that gives about `201.5`, matching the simulated `scale.param = 200`.
-
-
-
-```{r}
-# density <- density@density.surface[[1]]
-# 
-# fit.gam <- gam(density ~ s(x,y), data = density_true.data, family = gaussian(link="log"))
-
-# Use the gam object to create a density object
-gam.density <- make.density(region = region,
+# Use the dsm object to create a density object for dsims
+sample.density <- make.density(region = region,
                             x.space = 500,
                             density.surface = dsm_surface)
 
-plot(gam.density, region, scale = 0.001)
+plot(sample.density, region, scale = 0.001)
 ```
 
+## Create dsims objects
+
+Uses the sample objects 
+
 ```{r}
-# Define the population description
+# Define the population description for the sample density
 pop.desc <- make.population.description(region = region,
-                                        density = gam.density,
-                                        N = 1000,
+                                        density = sample.density,
+                                        N = 5000,
                                         fixed.N = TRUE)
 ```
 
 ```{r}
-# point.design <- make.design(region = region, 
-#                             transect.type = "point",
-#                             design = "systematic",
-#                             spacing = 1500,
-#                             edge.protocol = "minus",
-#                             design.angle = 65,
-#                             truncation = 750)
-# 
-# p.survey <- generate.transects(point.design)
-# plot(region, p.survey)
+# Define the point transect design for the sample density
+
+point.design <- make.design(region = region,
+                            transect.type = "point",
+                            design = "systematic",
+                            spacing = 750,
+                            edge.protocol = "minus",
+                            design.angle = 65,
+                            truncation = 750)
+
+p.survey <- generate.transects(point.design)
+plot(region, p.survey)
 ```
 
 ```{r}
-# Create the detectability description
+# Create the detectability description for the sample analysis
 detect <- make.detectability(key.function = "hn",
                              scale.param = 200,
                              truncation = 750)
@@ -401,6 +441,8 @@ plot(detect, pop.desc)
 ```
 
 ```{r}
+# create the analyses ds() specifications for the simulation runs
+
 analyses <- make.ds.analysis(dfmodel = ~ 1,
                              key = "hn",
                              truncation = 750,
@@ -408,108 +450,53 @@ analyses <- make.ds.analysis(dfmodel = ~ 1,
                              criteria = "AIC")
 ```
 
+## Set up e.g. simulation
+
 ```{r}
-# sim.point <- make.simulation(reps = 1,
-#                                 design = point.design,
-#                                 population.description = pop.desc,
-#                                 detectability = detect,
-#                                 ds.analysis = analyses)
+# Creates the simulation set-up
+
+sim.point <- make.simulation(reps = 3,
+                                design = point.design,
+                                population.description = pop.desc,
+                                detectability = detect,
+                                ds.analysis = analyses)
 ```
 
 ```{r}
-# # Generate a single instance of a survey: a population, set of transects 
-# # and the resulting distance data
-# eg.point.survey <- run.survey(sim.point)
-# 
-# # Plot it to view a summary
-# plot(eg.point.survey, region)
+# Generate a single instance of a survey: a population, set of transects
+# and the resulting distance data
+eg.point.survey <- run.survey(sim.point)
+
+# Plot it to view a summary
+plot(eg.point.survey, region)
 ```
 
 ```{r}
-# sim.point <- run.simulation(sim.point)
+sim.point <- run.simulation(sim.point)
 ```
 
 ```{r}
-# histogram.N.ests(sim.point)
+histogram.N.ests(sim.point)
 ```
 
 ```{r}
-# ests_vals <- sim.point@results$individuals$N
-#               
-# ests <- as.data.frame.table(ests_vals) |>
-#   pivot_wider(
-#     id_cols = c(Var1, Var3), # Stratum and Run
-#     names_from = Var2,       # Metric names (Estimate, se, cv, etc.)
-#     values_from = Freq       # The data values
-#   ) |>
-#   slice_head(n = 99) |>
-#   rename(region = Var1,
-#          sim = Var3,
-#          )
+ests_vals <- sim.point@results$individuals$N
+
+ests <- as.data.frame.table(ests_vals) |>
+  pivot_wider(
+    id_cols = c(Var1, Var3), # Stratum and Run
+    names_from = Var2,       # Metric names (Estimate, se, cv, etc.)
+    values_from = Freq       # The data values
+  ) |>
+  slice_head(n = 99) |>
+  rename(region = Var1,
+         sim = Var3,
+         )
 ```
 
 ```{r}
-# var(ests$Estimate)
+sd(ests$Estimate)
 ```
-
-#### Looped sim
-
-```{r}
-# Create grid of angles and pre-allocate the results vector
-angles <- seq(0, 90, length.out = 100)
-n_hat_i <- numeric(length(angles))
-
-# Define static components outside the loop
-detect <- make.detectability(
-  key.function = "hn",
-  scale.param = 200,
-  truncation = 750
-)
-
-analyses <- make.ds.analysis(
-  dfmodel = ~ 1,
-  key = "hn",
-  truncation = 750,
-  er.var = "P3",
-  criteria = "AIC"
-)
-
-# Loop over angles and store results
-for (i in seq_along(angles)) {
-  point.design <- make.design(
-    region = region, 
-    transect.type = "point",
-    design = "systematic",
-    spacing = 1500,
-    edge.protocol = "minus",
-    design.angle = angles[i],
-    truncation = 750
-  )
-  
-  sim.point <- make.simulation(
-    reps = 1,
-    design = point.design,
-    population.description = pop.desc,
-    detectability = detect,
-    ds.analysis = analyses
-  )
-  
-  sim.point <- run.simulation(sim.point)
-  
-  # Extract and store N for this iteration
-  n_hat_i[i] <- sim.point@results[["individuals"]][["N"]][,,2][1]
-
-}
-```
-
-```{r}
-sd(n_hat_i)
-```
-
-
-
-
-
 
 
 
