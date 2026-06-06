@@ -1,4 +1,5 @@
-# Load packages. ###
+## Load packages
+
 library(tidyverse)
 library(dsims)
 library(Distance)
@@ -7,20 +8,8 @@ library(dsm)
 library(sf)
 library(mgcv)
 
-set.seed(1234567890)
-
 ### Constants
 
-REGION_NAME <- "simsquare"
-REGION_UNITS <- "m"
-REGION_BOUNDS <- c(xmin = 0, xmax = 10000, ymin = 0, ymax = 10000)
-
-DENSITY_GRID_SPACING <- 500
-HOTSPOTS <- list(
-  list(centre = c(2000, 8000), sigma = 800, amplitude = 1.2),
-  list(centre = c(5000, 2000), sigma = 6000, amplitude = 0.5),
-  list(centre = c(8000, 9000), sigma = 1000, amplitude = 2)
-)
 TRUE_N <- 5000
 
 TRUNCATION_DISTANCE <- 750
@@ -30,12 +19,73 @@ POINT_SPACING <- 750
 ANGLE <- 90
 BOOTSTRAP_REPS <- 5
 
-### Helper functions
+
+## Make region (common to all analysis steps)
+
+make_region <- function(lower_x_bound,
+                        upper_x_bound,
+                        lower_y_bound,
+                        upper_y_bound,
+                        units) {
+  
+  # create survey sf object
+  simsquare <- sf::st_bbox(c(xmin = lower_x_bound, xmax = upper_x_bound, 
+                             ymin = lower_y_bound, ymax = upper_y_bound)) |> 
+    sf::st_as_sfc() |> 
+    sf::st_as_sf()
+  
+  # make region with dssd
+  region <- dssd::make.region(region.name = "region",
+                              shape = simsquare,
+                              units = units)
+}
+
+## Test
+
+region <- make_region(0, 10000, 0, 10000, "m")
+
+plot(region)
+
+## Make theoretical density of animals
+
+make_density <- function(region,
+                         hotspots,
+                         x_space = 500) {
+  
+  # Create basic uniform density
+  density_true <- dsims::make.density(region = region,
+                                      x.space = x_space,
+                                      constant = 1)
+  
+  # 3. Iteratively add hotspots to create spatial variability
+  for (hotspot in hotspots) {
+    density_true <- dsims::add.hotspot(object = density_true,
+                                       centre = hotspot$centre,
+                                       sigma = hotspot$sigma,
+                                       amplitude = hotspot$amplitude)
+  }
+  
+  return(density_true)
+}
+
+## Test
+
+my_hotspots <- list(
+  list(centre = c(2000, 8000), sigma = 800, amplitude = 1.2),
+  list(centre = c(5000, 2000), sigma = 6000, amplitude = 0.5),
+  list(centre = c(8000, 9000), sigma = 1000, amplitude = 2)
+)
+
+density_true <- make_density(region, my_hotspots)
+
+plot(density_true)
 
 
 
+## Make survey design
 
 make_point_design <- function(region,
+                              transect_type,
                               angle = ANGLE,
                               spacing = POINT_SPACING,
                               truncation = TRUNCATION_DISTANCE) {
@@ -49,12 +99,34 @@ make_point_design <- function(region,
     design.angle = angle,
     truncation = truncation
   )
+  
+}
+
+
+
+make_line_design <- function(region,
+                              angle = ANGLE,
+                              spacing = POINT_SPACING,
+                              truncation = TRUNCATION_DISTANCE) {
+  
+  make.design(
+    region = region,
+    transect.type = "line",
+    design = "systematic",
+    spacing = spacing,
+    edge.protocol = "minus",
+    design.angle = angle,
+    truncation = truncation
+  )
+  
 }
 
 
 
 
-make_ds_analysis <- function(truncation = TRUNCATION_DISTANCE) {
+
+make_ds_analysis <- function(truncation) {
+  
   make.ds.analysis(
     dfmodel = ~ 1,
     key = "hn",
@@ -62,6 +134,9 @@ make_ds_analysis <- function(truncation = TRUNCATION_DISTANCE) {
     er.var = "P3",
     criteria = "AIC"
   )
+  
+  return()
+  
 }
 
 
@@ -368,7 +443,8 @@ get_fit2 <- function(
   se_ovr <- as.numeric(m1_ovr$dht$individuals$N$se)
   se_ovr <- if (length(se_ovr) > 0) se_ovr else NA
   
-  sigma_hat <- as.numeric(exp(coef(m1_sys$ddf)$scale["(Intercept)", "estimate"]))
+  sigma_hat <- 
+    as.numeric(exp(coef(m1_sys$ddf)$scale["(Intercept)", "estimate"]))
   
   obsdata <- dist_data |>
     filter(!is.na(distance)) |>
@@ -554,7 +630,9 @@ ggplot() +
   geom_sf(data = region@region, fill = NA) + 
   geom_sf(data = survey_data$transects@samplers, shape = 3, color = "blue") + 
   geom_point(data = truth$population@population |> 
-               mutate(detected = individual %in% survey_data$dist_data$individual[!is.na(survey_data$dist_data$distance)]), 
+               mutate(detected = individual %in% 
+                        survey_data$dist_data$
+                        individual[!is.na(survey_data$dist_data$distance)]), 
              aes(x = x, y = y, color = detected), size = 0.5, alpha = 0.6) + 
   scale_color_manual(values = c("FALSE" = "grey70", "TRUE" = "red")) + 
   coord_sf() + 
