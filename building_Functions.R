@@ -8,10 +8,23 @@ library(dsm)
 library(sf)
 library(mgcv)
 
-# Functions
+### Example Constants
 
-## Generates a study region based on upper and lower x and y bounds 
-## and allows for units to be specified
+true_N <- 5000
+
+points_or_lines = "line"
+
+trunc_dist <- 750
+scale_parameter <- 200
+design_spacing <- 750
+
+density_grid_spacing <- 500
+
+design_angle <- 0
+bootstrap_reps <- 5
+
+
+## Make region (common to all analysis steps)
 
 make_region <- function(lower_x_bound,
                         upper_x_bound,
@@ -31,6 +44,12 @@ make_region <- function(lower_x_bound,
                               units = units)
 }
 
+## Test
+
+region <- make_region(0, 10000, 0, 10000, "m")
+
+plot(region)
+
 ## Make theoretical density of animals
 
 make_density <- function(region,
@@ -42,6 +61,7 @@ make_density <- function(region,
                                       x.space = x_space,
                                       constant = 1)
   
+  # 3. Iteratively add hotspots to create spatial variability
   for (hotspot in hotspots) {
     density_true <- dsims::add.hotspot(object = density_true,
                                        centre = hotspot$centre,
@@ -52,7 +72,21 @@ make_density <- function(region,
   return(density_true)
 }
 
-## Make survey design, points or lines available
+## Test
+
+my_hotspots <- list(
+  list(centre = c(2000, 8000), sigma = 800, amplitude = 1.2),
+  list(centre = c(5000, 2000), sigma = 6000, amplitude = 0.5),
+  list(centre = c(8000, 9000), sigma = 1000, amplitude = 2)
+)
+
+density_true <- make_density(region, my_hotspots)
+
+plot(density_true)
+
+
+
+## Make survey design
 
 make_design <- function(region,
                         transect_type = points_or_lines,
@@ -72,7 +106,7 @@ make_design <- function(region,
   
 }
 
-## Makes the ds analysis object for dsims
+
 
 make_ds_analysis <- function(truncation = trunc_dist) {
   
@@ -85,7 +119,7 @@ make_ds_analysis <- function(truncation = trunc_dist) {
   
 }
 
-## Makes detectability object for dsims
+
 
 make_detectability <- function(scale_param = scale_parameter,
                                truncation = trunc_dist) {
@@ -97,8 +131,16 @@ make_detectability <- function(scale_param = scale_parameter,
   )
 }
 
-## Generates true density surface, population description, detectability,
-## population iteration
+## Test 
+
+design <- make_design(region, "line", 1000, 0, 750)
+
+analysis <- make_ds_analysis(750)
+
+detectability <- make_detectability(200, 750)
+
+
+### Functions
 
 generate_simulated_truth <- function(region,
                                      N = true_N,
@@ -121,6 +163,18 @@ generate_simulated_truth <- function(region,
       amplitude = hotspot$amplitude
     )
   }
+  
+  # fit.gam <- gam(
+  #   density ~ s(x, y),
+  #   data = density_true@density.surface[[1]],
+  #   family = gaussian(link = "log")
+  # )
+  # 
+  # gam.density_true <- make.density(
+  #   region = region,
+  #   x.space = x_space,
+  #   fitted.model = fit.gam
+  # )
   
   density_surface_true <- density_true@density.surface[[1]] |>
     mutate(
@@ -158,11 +212,11 @@ generate_simulated_truth <- function(region,
     population_description = pop.desc_true,
     population = pop_true,
     detectability = detect_true
+    # gam = fit.gam
   )
 }
 
-## Generates survey data from the population specified in generate simulated truth
-## returns design, transects, distribution data from the surveys themselves
+
 
 generate_survey_data <- function(
     region,
@@ -209,11 +263,9 @@ generate_survey_data <- function(
   )
 }
 
-## Uses distribution data from generate survey data, and design to:
-## generate estimates and SEs from distance sampling model
-## fit a density surface
-## predict from that density surface
-## make a density and population iteration from that surface
+
+
+
 
 get_fit <- function(dist_data,
                     transects,
@@ -359,9 +411,10 @@ get_fit <- function(dist_data,
   )
 }
 
-## uses the population from get_fit, sigma hat from the ds() model,
-## and the survey design to generate an estimated N_hat 
-## Run this multiple times to estimate a SE by bootstraps
+
+
+
+
 
 get_bootstrap <- function(region,
                           population_description,
@@ -379,6 +432,7 @@ get_bootstrap <- function(region,
   
   analyses <- make_ds_analysis(truncation = truncation)
   
+  # FIXED: Renamed from point.design to design so make.simulation finds it
   design <- make_design(
     region = region,
     angle = angle,
@@ -407,4 +461,126 @@ get_bootstrap <- function(region,
   )
 }
 
-## EOF
+
+
+
+### Test Cases
+
+# -------------------------------------------------------------------------
+# 1. Setup Common Environment
+# -------------------------------------------------------------------------
+cat("Setting up region and theoretical truth...\n")
+
+region <- make_region(0, 10000, 0, 10000, "m")
+truth <- generate_simulated_truth(region)
+
+# Visualize the baseline reality (Removed 'main' to prevent S4 method errors)
+plot(truth$density, region, scale = 0.001)
+plot(truth$detectability, truth$population_description)
+
+p_truth <- ggplot() +
+  geom_sf(data = region@region) +
+  geom_point(data = truth$population@population,
+             aes(x = x, y = y), size = 0.8) +
+  coord_sf() +
+  theme_bw() +
+  ggtitle("Theoretical Population Realization")
+print(p_truth)
+
+
+# -------------------------------------------------------------------------
+# TEST CASE 1: LINE TRANSECTS
+# -------------------------------------------------------------------------
+cat("\n--- Running Test Case 1: Line Transects ---\n")
+
+survey_data_lines <- generate_survey_data(
+  region = region,
+  realized_population = truth$population,
+  transect_type = "line"
+)
+
+# p_lines <- ggplot() + 
+#   geom_sf(data = region@region, fill = NA) + 
+#   geom_sf(data = survey_data_lines$transects@samplers, color = "blue") + 
+#   geom_point(data = truth$population@population |> 
+#                mutate(detected = object %in% 
+#                         survey_data_lines$dist_data$object[!is.na(survey_data_lines$dist_data$distance)]), 
+#              aes(x = x, y = y, color = detected), size = 0.5, alpha = 0.6) + 
+#   scale_color_manual(values = c("FALSE" = "grey70", "TRUE" = "red")) + 
+#   coord_sf() + 
+#   theme_bw() +
+#   ggtitle("Line Transect Survey")
+# print(p_lines)
+
+fit_lines <- get_fit(
+  dist_data = survey_data_lines$dist_data,
+  transects = survey_data_lines$transects,
+  region = region,
+  transect_type = "line"
+)
+
+if (!is.null(fit_lines$dsm)) {
+  cat("Line Transect DSM Fit Successfully.\n")
+  plot(fit_lines$density, region, scale = 0.001)
+} else {
+  cat("Line DSM failed to fit (likely zero observations).\n")
+}
+
+
+# -------------------------------------------------------------------------
+# TEST CASE 2: POINT TRANSECTS
+# -------------------------------------------------------------------------
+cat("\n--- Running Test Case 2: Point Transects ---\n")
+
+survey_data_points <- generate_survey_data(
+  region = region,
+  realized_population = truth$population,
+  transect_type = "point"
+)
+
+# p_points <- ggplot() + 
+#   geom_sf(data = region@region, fill = NA) + 
+#   geom_sf(data = survey_data_points$transects@samplers, shape = 3, color = "blue") + 
+#   geom_point(data = truth$population@population |> 
+#                mutate(detected = object %in% 
+#                         survey_data_points$dist_data$object[!is.na(survey_data_points$dist_data$distance)]), 
+#              aes(x = x, y = y, color = detected), size = 0.5, alpha = 0.6) + 
+#   scale_color_manual(values = c("FALSE" = "grey70", "TRUE" = "red")) + 
+#   coord_sf() + 
+#   theme_bw() +
+#   ggtitle("Point Transect Survey")
+# print(p_points)
+
+fit_points <- get_fit(
+  dist_data = survey_data_points$dist_data,
+  transects = survey_data_points$transects,
+  region = region,
+  transect_type = "point"
+)
+
+if (!is.null(fit_points$dsm)) {
+  cat("Point Transect DSM Fit Successfully.\n")
+  plot(fit_points$density, region, scale = 0.001)
+} else {
+  cat("Point DSM failed to fit (likely zero observations).\n")
+}
+
+
+# -------------------------------------------------------------------------
+# TEST CASE 3: BOOTSTRAP PIPELINE CHECK
+# -------------------------------------------------------------------------
+cat("\n--- Running Test Case 3: Small Bootstrap Pipeline Check ---\n")
+
+if (!is.null(fit_lines$dsm)) {
+  bootstrap_check <- get_bootstrap(
+    region = region,
+    population_description = fit_lines$population_description,
+    sigma_hat = fit_lines$sigma_hat,
+    transect_type = "line",
+    reps = 2
+  )
+  cat("Bootstrap completed successfully. Sample N_hats:\n")
+  print(bootstrap_check$N_hat)
+}
+
+
