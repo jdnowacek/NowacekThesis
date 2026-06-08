@@ -1,0 +1,118 @@
+---
+title: "testing_functions"
+format: html
+---
+
+Document to test out the "Functions.R" file and see how the estimators perform.
+
+# Packages
+
+```{r}
+library(tidyverse)
+library(dsims)
+library(Distance)
+library(dssd)
+library(dsm)
+library(sf)
+library(mgcv)
+```
+
+# Import Functions
+
+```{r}
+source(here::here("Functions.R"))
+```
+
+# Constants
+
+```{r}
+true_N <- 5000
+
+points_or_lines = "line"
+
+trunc_dist <- 750
+scale_parameter <- 200
+design_spacing <- 750
+
+density_grid_spacing <- 500
+
+design_angle <- 0
+bootstrap_reps <- 50
+```
+
+# Code
+
+## Region
+
+```{r}
+region <- make_region(0, 10000, 0, 10000, "m")
+```
+
+## Density
+
+```{r}
+my_hotspots <- list(
+  list(centre = c(2000, 8000), sigma = 800, amplitude = 1.2),
+  list(centre = c(5000, 2000), sigma = 6000, amplitude = 0.5),
+  list(centre = c(8000, 9000), sigma = 1000, amplitude = 2)
+)
+
+density_true <- make_hotspot_density(region, my_hotspots)
+```
+
+## True population
+
+```{r}
+truth <- generate_simulated_truth(region)
+```
+
+## Survey
+
+generates the iteration of survey data analogous to real data collection
+
+```{r}
+survey_data_lines <- generate_survey_data(
+  region = region,
+  realized_population = truth$population,
+  transect_type = "line"
+)
+```
+
+## Fit 
+
+```{r}
+fit_lines <- get_fit(
+  dist_data = survey_data_lines$dist_data,
+  transects = survey_data_lines$transects,
+  region = region,
+  transect_type = "line"
+)
+```
+
+## Bootstraps
+
+```{r}
+bootstraps <- get_bootstrap(
+  region = region,
+  population_description = fit_lines$population_description,
+  sigma_hat = fit_lines$sigma_hat,
+  transect_type = "line",
+  reps = bootstrap_reps
+)
+
+est <- sd(bootstraps$N_hat)
+est
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

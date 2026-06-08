@@ -28,7 +28,7 @@ TRUE_DETECTION_SCALE <- 200
 
 POINT_SPACING <- 750
 ANGLE <- 90
-BOOTSTRAP_REPS <- 5
+BOOTSTRAP_REPS <- 3
 
 ### Helper functions
 
@@ -582,7 +582,7 @@ sd(bootstrap$N_hat)
 
 ## Alternate outer loop
 
-B1 <- 5 # Set appropriately for your full run
+B1 <- 2 # Set appropriately for your full run
 
 # Pre-allocate storage
 sim_results <- tibble(

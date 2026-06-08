@@ -33,7 +33,7 @@ make_region <- function(lower_x_bound,
 
 ## Make theoretical density of animals
 
-make_density <- function(region,
+make_hotspot_density <- function(region,
                          hotspots,
                          x_space = density_grid_spacing) {
   
@@ -52,51 +52,6 @@ make_density <- function(region,
   return(density_true)
 }
 
-## Make survey design, points or lines available
-
-make_design <- function(region,
-                        transect_type = points_or_lines,
-                        spacing = design_spacing,
-                        angle = design_angle,
-                        truncation = trunc_dist) {
-  
-  make.design(
-    region        = region,
-    transect.type = transect_type,  # Evaluates the literal variable passed ("point" or "line")
-    design        = "systematic",
-    spacing       = spacing,
-    edge.protocol = "minus",
-    design.angle  = angle,
-    truncation    = truncation
-  )
-  
-}
-
-## Makes the ds analysis object for dsims
-
-make_ds_analysis <- function(truncation = trunc_dist) {
-  
-  make.ds.analysis(
-    dfmodel = ~ 1,
-    key = "hn",
-    truncation = truncation,
-    criteria = "AIC"
-  )
-  
-}
-
-## Makes detectability object for dsims
-
-make_detectability <- function(scale_param = scale_parameter,
-                               truncation = trunc_dist) {
-  
-  make.detectability(
-    key.function = "hn",
-    scale.param = scale_param,
-    truncation = truncation
-  )
-}
-
 ## Generates true density surface, population description, detectability,
 ## population iteration
 
@@ -107,20 +62,9 @@ generate_simulated_truth <- function(region,
                                      scale_param = scale_parameter,
                                      truncation = trunc_dist) {
   
-  density_true <- make.density(
-    region = region,
-    x.space = x_space,
-    constant = 1
-  )
-  
-  for (hotspot in hotspots) {
-    density_true <- add.hotspot(
-      object = density_true,
-      centre = hotspot$centre,
-      sigma = hotspot$sigma,
-      amplitude = hotspot$amplitude
-    )
-  }
+  density_true <- make_hotspot_density(region = region,
+                               hotspots = my_hotspots,
+                               x_space = x_space)
   
   density_surface_true <- density_true@density.surface[[1]] |>
     mutate(
@@ -142,8 +86,9 @@ generate_simulated_truth <- function(region,
     fixed.N = TRUE
   )
   
-  detect_true <- make_detectability(
-    scale_param = scale_param,
+  detect_true <- make.detectability(
+    key.function = "hn",
+    scale.param = scale_param,
     truncation = truncation
   )
   
@@ -164,21 +109,21 @@ generate_simulated_truth <- function(region,
 ## Generates survey data from the population specified in generate simulated truth
 ## returns design, transects, distribution data from the surveys themselves
 
-generate_survey_data <- function(
-    region,
-    realized_population, # output from (generate_simulated_truth_object)$population
-    angle = design_angle,
-    transect_type = points_or_lines,
-    spacing = design_spacing,
-    truncation = trunc_dist) 
-{
+generate_survey_data <- function(region,
+                                 realized_population, # output from (generate_simulated_truth_object)$population
+                                 angle = design_angle,
+                                 transect_type = points_or_lines,
+                                 spacing = design_spacing,
+                                 truncation = trunc_dist) {
   
-  design <- make_design(
-    region = region,
-    transect_type = transect_type,
-    angle = angle,
-    spacing = spacing,
-    truncation = truncation
+  design <- make.design(
+    region        = region,
+    transect.type = transect_type,  # Evaluates the literal variable passed ("point" or "line")
+    design        = "systematic",
+    spacing       = spacing,
+    edge.protocol = "minus",
+    design.angle  = angle,
+    truncation    = truncation
   )
   
   transects <- generate.transects(design)
@@ -241,7 +186,6 @@ get_fit <- function(dist_data,
   se_ds <- if (length(se_ds) > 0) se_ds else NA
   
   sigma_hat <- as.numeric(exp(coef(m1$ddf)$scale["(Intercept)", "estimate"]))
-  
   
   
   obsdata <- dist_data |>
@@ -327,10 +271,25 @@ get_fit <- function(dist_data,
     type = "response"
   )
   
-  dsm_surface <- pred_grid |>
-    mutate(density = pmax(N_hat / area, .Machine$double.eps)) |>
-    select(strata, density, x, y, geometry)
-  
+  if (transect_type == "line") {
+    dsm_surface <- pred_grid |>
+      group_by(strata, x) |>
+      summarize(
+        N_hat = sum(N_hat, na.rm = TRUE),
+        area = sum(area, na.rm = TRUE),
+        geometry = sf::st_union(geometry), # Combines vertical grid squares into a continuous line strip
+        .groups = "drop"
+      ) |>
+      mutate(density = pmax(N_hat / area, .Machine$double.eps),
+             y = 0) |>
+      select(strata, density, x, y, geometry)
+  } else {
+    # Keep standard 2D spatial grid ("boxlets")
+    dsm_surface <- pred_grid |>
+      mutate(density = pmax(N_hat / area, .Machine$double.eps)) |>
+      select(strata, density, x, y, geometry)
+  }
+
   gam.density <- make.density(
     region = region,
     x.space = x_space,
@@ -372,24 +331,34 @@ get_bootstrap <- function(region,
                           spacing = design_spacing,
                           truncation = trunc_dist) {
   
-  detect <- make_detectability(
-    scale_param = sigma_hat,
+  
+  detect <- make.detectability(
+    key.function = "hn",
+    scale.param = sigma_hat,
     truncation = truncation
   )
   
-  analyses <- make_ds_analysis(truncation = truncation)
   
-  design <- make_design(
-    region = region,
-    angle = angle,
-    transect_type = transect_type,
-    spacing = spacing,
-    truncation = truncation
+  analyses <- make.ds.analysis(
+    dfmodel = ~ 1,
+    key = "hn",
+    truncation = truncation,
+    criteria = "AIC"
+  )
+  
+  design <- make.design(
+    region        = region,
+    transect.type = transect_type,  # Evaluates the literal variable passed ("point" or "line")
+    design        = "systematic",
+    spacing       = spacing,
+    edge.protocol = "minus",
+    design.angle  = angle,
+    truncation    = truncation
   )
   
   sim_obj <- make.simulation(
     reps = reps,
-    design = design, # Now correctly points to the object created above
+    design = design, 
     population.description = population_description,
     detectability = detect,
     ds.analysis = analyses
