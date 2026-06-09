@@ -32,6 +32,7 @@ make_region <- function(lower_x_bound,
 }
 
 ## Make theoretical density of animals
+## using iterative hotspots added to the densities
 
 make_hotspot_density <- function(region,
                          hotspots,
@@ -49,11 +50,21 @@ make_hotspot_density <- function(region,
                                        amplitude = hotspot$amplitude)
   }
   
+  ## Hotspots should come in a list like this
+  # my_hotspots <- list(
+  # list(centre = c(2000, 8000), sigma = 800, amplitude = 1.2),
+  # list(centre = c(5000, 2000), sigma = 6000, amplitude = 0.5),
+  # list(centre = c(8000, 9000), sigma = 1000, amplitude = 2)
+  # )
+  
   return(density_true)
 }
 
-## Generates true density surface, population description, detectability,
-## population iteration
+## Generates;
+## true density surface using hotspot density above,
+## population description from that density and region,
+## detectability from the scale parameter and truncation distance
+## population iteration from the population description, detecability, and region
 
 generate_simulated_truth <- function(region,
                                      N = true_N,
@@ -107,7 +118,10 @@ generate_simulated_truth <- function(region,
 }
 
 ## Generates survey data from the population specified in generate simulated truth
-## returns design, transects, distribution data from the surveys themselves
+## Allows for different survey types (points or lines)
+## returns survey design object, 
+## transects from that design,
+## 'dist data' which contains the results of the survey specified
 
 generate_survey_data <- function(region,
                                  realized_population, 
@@ -160,6 +174,7 @@ generate_survey_data <- function(region,
 ## fit a density surface
 ## predict from that density surface
 ## make a density and population iteration from that surface
+## Calculate analytical variances from the survey
 
 get_fit <- function(dist_data,
                     transects,
@@ -170,7 +185,9 @@ get_fit <- function(dist_data,
                     x_space = density_grid_spacing,
                     y_space = density_grid_spacing) {
   
-  # Fit the distance sampling model
+  ## ds() model ----- 
+  
+  # Fit the distance sampling model on the 'true' data from the survey above
   m1 <- ds(
     data = dist_data,
     transect = transect_type,
@@ -180,6 +197,7 @@ get_fit <- function(dist_data,
     quiet = TRUE
   )
   
+  # Store estimates of total count from the ds() model
   N_hat <- as.numeric(m1$dht$individuals$N$Estimate)
   N_hat <- if (length(N_hat) > 0) as.integer(round(N_hat)) else NA
   
@@ -187,9 +205,12 @@ get_fit <- function(dist_data,
   se_ds <- as.numeric(m1$dht$individuals$N$se)
   se_ds <- if (length(se_ds) > 0) se_ds else NA
   
+  # Store value of the scale parameter estimate from the ds() model
   sigma_hat <- as.numeric(exp(coef(m1$ddf)$scale["(Intercept)", "estimate"]))
   
+  ## data wrangling for dsm() ----- 
   
+  # re-organizes dist_data as obsdata for use in the density surface models
   obsdata <- dist_data |>
     filter(!is.na(distance)) |>
     mutate(object = as.character(object),
@@ -197,11 +218,13 @@ get_fit <- function(dist_data,
            size = 1) |>
     select(object, Sample.Label, size, distance)
   
+  # pulls the samplers from the transects object for sf data
   samplers <- transects@samplers
   
+  # pulls the geometry of the transects for lines or points
   if (transect_type == "line") {
     # Suppress the centroid warning for constant attributes
-    sf::st_agr(samplers) <- "constant" 
+    # sf::st_agr(samplers) <- "constant" 
     sampler_centroids <- sf::st_centroid(samplers)
     sampler_xy <- sf::st_coordinates(sampler_centroids)
     effort <- as.numeric(sf::st_length(samplers))
@@ -210,6 +233,8 @@ get_fit <- function(dist_data,
     effort <- 1
   }
   
+  # produces segdata, which is geometry compatible for dsm models
+  # arranges lines so that they work for overlapping var. est. methods
   segdata <- samplers |>
     sf::st_drop_geometry() |>
     mutate(
@@ -232,6 +257,9 @@ get_fit <- function(dist_data,
     ))
   }
   
+  ## dsm() models ----- 
+  
+  # fits the density surface models
   if (transect_type == "line") {
     dsm1 <- dsm(
       count ~ s(x), # 1D smooth for lines
@@ -254,6 +282,8 @@ get_fit <- function(dist_data,
     )
   }
   
+  ## prediction from dsm() ----- 
+  
   prediction_grid <- make.density(
     region = region,
     x.space = x_space,
@@ -268,6 +298,8 @@ get_fit <- function(dist_data,
   
   predictions <- predict(dsm1, newdata = pred_data, off.set = pred_grid$area, type = "response")
   pred_grid <- pred_grid |> mutate(N_hat_pred = as.numeric(predictions))
+  
+  ## dsm surface from preds ----- 
   
   if (transect_type == "line") {
     
@@ -288,7 +320,7 @@ get_fit <- function(dist_data,
       select(strata, density, x, y, N_hat_pred, area, geometry)
   }
   
-  gam.density <- make.density(
+  est.density <- make.density(
     region = region, 
     x.space = x_space, 
     y.space = y_space, 
@@ -296,7 +328,7 @@ get_fit <- function(dist_data,
   
   pop.desc <- make.population.description(
     region = region, 
-    density = gam.density, 
+    density = est.density, 
     N = N_hat, 
     fixed.N = TRUE)
   
@@ -453,7 +485,7 @@ get_fit <- function(dist_data,
   list(
     detection_model = m1, dsm = dsm1, N_hat = N_hat, se_m1 = se_ds, 
     sigma_hat = sigma_hat, obsdata = obsdata, segdata = segdata, 
-    density_surface = dsm_surface, density = gam.density, 
+    density_surface = dsm_surface, density = est.density, 
     population_description = pop.desc, 
     analytical_variances = analytical_variances
   )

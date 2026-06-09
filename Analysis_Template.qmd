@@ -37,7 +37,7 @@ design_spacing <- 750
 density_grid_spacing <- 500
 
 design_angle <- 0
-bootstrap_reps <- 50
+bootstrap_reps <- 100
 ```
 
 # Code
