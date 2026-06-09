@@ -63,7 +63,7 @@ generate_simulated_truth <- function(region,
                                      truncation = trunc_dist) {
   
   density_true <- make_hotspot_density(region = region,
-                               hotspots = my_hotspots,
+                               hotspots = hotspots,
                                x_space = x_space)
   
   density_surface_true <- density_true@density.surface[[1]] |>
@@ -110,7 +110,8 @@ generate_simulated_truth <- function(region,
 ## returns design, transects, distribution data from the surveys themselves
 
 generate_survey_data <- function(region,
-                                 realized_population, # output from (generate_simulated_truth_object)$population
+                                 realized_population, 
+                                 # output from (generate_simulated_truth_object)$population
                                  angle = design_angle,
                                  transect_type = points_or_lines,
                                  spacing = design_spacing,
@@ -164,6 +165,7 @@ get_fit <- function(dist_data,
                     transects,
                     region,
                     transect_type = points_or_lines,
+                    spacing = design_spacing,
                     truncation = trunc_dist,
                     x_space = density_grid_spacing,
                     y_space = density_grid_spacing) {
@@ -190,11 +192,9 @@ get_fit <- function(dist_data,
   
   obsdata <- dist_data |>
     filter(!is.na(distance)) |>
-    mutate(
-      object = as.character(object),
-      Sample.Label = as.character(Sample.Label),
-      size = 1
-    ) |>
+    mutate(object = as.character(object),
+           Sample.Label = as.character(Sample.Label),
+           size = 1) |>
     select(object, Sample.Label, size, distance)
   
   samplers <- transects@samplers
@@ -218,7 +218,8 @@ get_fit <- function(dist_data,
       x = sampler_xy[, "X"],
       y = sampler_xy[, "Y"]
     ) |>
-    select(Sample.Label, Effort, x, y)
+    select(Sample.Label, Effort, x, y) |> 
+    arrange(x) # CRITICAL: Orders segments spatially for overlapping variances
   
   # Check if there are valid counts for the DSM
   if (nrow(obsdata) == 0) {
@@ -226,7 +227,8 @@ get_fit <- function(dist_data,
       detection_model = m1, dsm = NULL, N_hat = N_hat,
       se_m1 = se_ds, sigma_hat = sigma_hat,
       obsdata = obsdata, segdata = segdata, density_surface = NULL,
-      density = NULL, population_description = NULL
+      density = NULL, population_description = NULL,
+      analytical_variances = NULL
     ))
   }
   
@@ -264,59 +266,199 @@ get_fit <- function(dist_data,
   
   pred_data <- sf::st_drop_geometry(pred_grid)
   
-  pred_grid$N_hat <- predict(
-    dsm1,
-    newdata = pred_data,
-    off.set = pred_grid$area,
-    type = "response"
-  )
+  predictions <- predict(dsm1, newdata = pred_data, off.set = pred_grid$area, type = "response")
+  pred_grid <- pred_grid |> mutate(N_hat_pred = as.numeric(predictions))
   
   if (transect_type == "line") {
-    dsm_surface <- pred_grid |>
-      group_by(strata, x) |>
+    
+    dsm_surface <- pred_grid |> 
+      group_by(strata, x) |> 
       summarize(
-        N_hat = sum(N_hat, na.rm = TRUE),
+        N_hat_pred = sum(N_hat_pred, na.rm = TRUE),
         area = sum(area, na.rm = TRUE),
-        geometry = sf::st_union(geometry), # Combines vertical grid squares into a continuous line strip
+        geometry = sf::st_union(geometry),
         .groups = "drop"
-      ) |>
-      mutate(density = pmax(N_hat / area, .Machine$double.eps),
-             y = 0) |>
-      select(strata, density, x, y, geometry)
+      ) |> 
+      mutate(density = pmax(N_hat_pred / area, .Machine$double.eps), y = 0) |> 
+      select(strata, density, x, y, N_hat_pred, area, geometry)
+    
   } else {
-    # Keep standard 2D spatial grid ("boxlets")
-    dsm_surface <- pred_grid |>
-      mutate(density = pmax(N_hat / area, .Machine$double.eps)) |>
-      select(strata, density, x, y, geometry)
+    dsm_surface <- pred_grid |> 
+      mutate(density = pmax(N_hat_pred / area, .Machine$double.eps)) |> 
+      select(strata, density, x, y, N_hat_pred, area, geometry)
   }
-
+  
   gam.density <- make.density(
-    region = region,
-    x.space = x_space,
-    y.space = y_space,
-    density.surface = dsm_surface
-  )
+    region = region, 
+    x.space = x_space, 
+    y.space = y_space, 
+    density.surface = dsm_surface)
   
   pop.desc <- make.population.description(
-    region = region,
-    density = gam.density,
-    N = N_hat,
-    fixed.N = TRUE
-  )
+    region = region, 
+    density = gam.density, 
+    N = N_hat, 
+    fixed.N = TRUE)
   
+  analytical_variances <- NULL
+  
+  ## Additional section for striplet estimator for line transects. Needs work
+  
+  if (transect_type == "line") {
+    
+    obs_counts <- obsdata |> group_by(Sample.Label) |> summarize(count = sum(size), .groups = "drop")
+    line_data <- segdata |> left_join(obs_counts, by = "Sample.Label") |> mutate(count = replace_na(count, 0))
+    
+    nspotted <- line_data$count
+    lvec <- line_data$Effort
+    L <- sum(lvec)
+    k <- length(lvec)
+    ntot <- sum(nspotted)
+    
+    # 7b. Empirical Estimators (R2, R3, S1, S2, O1, O2)
+    var.R2 <- (k * sum(lvec^2 * (nspotted/lvec - ntot/L)^2)) / (L^2 * (k - 1))
+    var.R3 <- 1 / (L * (k - 1)) * sum(lvec * (nspotted/lvec - ntot/L)^2)
+    
+    # Stratified (S1, S2)
+    H_strat <- floor(k/2)
+    k.h <- rep(2, H_strat)
+    if(k %% 2 > 0) k.h[H_strat] <- 3
+    end.strat <- cumsum(k.h)
+    begin.strat <- cumsum(k.h) - k.h + 1
+    
+    sum.S1 <- 0; sum.S2 <- 0
+    for(h in 1:H_strat) {
+      n.strat <- nspotted[begin.strat[h]:end.strat[h]]
+      l.strat <- lvec[begin.strat[h]:end.strat[h]]
+      nbar.strat <- mean(n.strat)
+      lbar.strat <- mean(l.strat)
+      
+      inner.S1 <- sum((n.strat - nbar.strat - (ntot/L) * (l.strat - lbar.strat))^2)
+      sum.S1 <- sum.S1 + k.h[h] / (k.h[h] - 1) * inner.S1
+      
+      L.strat <- sum(l.strat)
+      var.strat.S2 <- k.h[h] / (L.strat^2 * (k.h[h] - 1)) * sum(l.strat^2 * (n.strat/l.strat - nbar.strat/lbar.strat)^2)
+      sum.S2 <- sum.S2 + L.strat^2 * var.strat.S2
+    }
+    var.S1 <- sum.S1 / L^2
+    var.S2 <- sum.S2 / L^2
+    
+    # Overlapping (O1, O2)
+    lvec.1 <- lvec[-k]; lvec.2 <- lvec[-1]
+    nvec.1 <- nspotted[-k]; nvec.2 <- nspotted[-1]
+    ervec.1 <- nvec.1/lvec.1; ervec.2 <- nvec.2/lvec.2
+    
+    var.O1 <- k / (2 * L^2 * (k - 1)) * sum((nvec.1 - nvec.2 - ntot/L * (lvec.1 - lvec.2))^2)
+    var.O2 <- (2 * k) / (L^2 * (k - 1)) * sum(((lvec.1 * lvec.2)/(lvec.1 + lvec.2))^2 * (ervec.1 - ervec.2)^2)
+    
+    ## The Exact Striplet Variance (Grid-Shift Loop)
+    
+    muvec <- dsm_surface$N_hat_pred 
+    midvec <- dsm_surface$x
+    musum <- sum(muvec, na.rm = TRUE)
+    
+    bbox <- sf::st_bbox(region@region)
+    y_length <- as.numeric(bbox["ymax"] - bbox["ymin"])
+    x_min <- as.numeric(bbox["xmin"])
+    x_max <- as.numeric(bbox["xmax"])
+    
+    B <- 50 
+    bvec <- seq(0, spacing, length.out = B)
+    Lbvec <- rep(0, B)
+    Abvec <- rep(0, B)
+    
+    for (b_idx in 1:B) {
+      b_val <- bvec[b_idx]
+      lines_grid <- seq(x_min + b_val, x_max, by = spacing)
+      Lbvec[b_idx] <- length(lines_grid) * y_length
+      
+      min_dist <- sapply(midvec, function(m) min(abs(m - lines_grid)))
+      
+      g_b <- exp(- (min_dist^2) / (2 * sigma_hat^2))
+      g_b[min_dist > truncation] <- 0 
+      
+      Abvec[b_idx] <- sum(muvec * g_b, na.rm = TRUE)
+    }
+    
+    var_ER_striplet <- mean((Abvec + (Abvec^2) * (1 - 1/musum)) / (Lbvec^2)) - (mean(Abvec / Lbvec))^2
+    
+    ## The Delta Method: Combining var(ER) with var(Detection)
+    
+    # Safely extract the detection probability variance from the 'ds' model
+    cv_N_m1_sq <- (se_ds / N_hat)^2
+    cv_ER_m1_sq <- (as.numeric(m1$dht$individuals$summary$cv.ER[1]))^2
+    cv_Pa_sq <- max(0, cv_N_m1_sq - cv_ER_m1_sq) # Isolate detection variance
+    
+    # Calculate global Density
+    Region_Area <- sum(pred_grid$area, na.rm = TRUE)
+    D_hat <- N_hat / Region_Area
+    erhat <- ntot / L
+    
+    # Delta Method Combiner Function (Matches Fewster exactly)
+    apply_delta <- function(var_ER) {
+      cv_ER_sq <- var_ER / (erhat^2)
+      var_N <- (N_hat^2) * (cv_ER_sq + cv_Pa_sq)
+      var_D <- (D_hat^2) * (cv_ER_sq + cv_Pa_sq)
+      
+      # FIX: Convert Variances back to Standard Errors for comparison
+      list(
+        var_N = var_N, 
+        var_D = var_D,
+        se_N = sqrt(var_N), 
+        se_D = sqrt(var_D)
+      )
+    }
+    
+    # Apply to all estimators
+    delta_R2 <- apply_delta(var.R2)
+    delta_R3 <- apply_delta(var.R3)
+    delta_S1 <- apply_delta(var.S1)
+    delta_S2 <- apply_delta(var.S2)
+    delta_O1 <- apply_delta(var.O1)
+    delta_O2 <- apply_delta(var.O2)
+    delta_striplet <- apply_delta(var_ER_striplet)
+    
+    # Bundle all variances into a comprehensive flat list
+    analytical_variances <- list(
+      # Encounter Rate Variances (Raw)
+      var_ER_R2 = var.R2,
+      var_ER_R3 = var.R3,
+      var_ER_S1 = var.S1,
+      var_ER_S2 = var.S2,
+      var_ER_O1 = var.O1,
+      var_ER_O2 = var.O2,
+      var_ER_striplet = var_ER_striplet,
+      
+      # Final Abundance Standard Errors se(N) -- USE THESE FOR COMPARISON
+      se_N_R2 = delta_R2$se_N,
+      se_N_R3 = delta_R3$se_N,
+      se_N_S1 = delta_S1$se_N,
+      se_N_S2 = delta_S2$se_N,
+      se_N_O1 = delta_O1$se_N,
+      se_N_O2 = delta_O2$se_N,
+      se_N_striplet = delta_striplet$se_N,
+      
+      # Final Density Standard Errors se(D)
+      se_D_R2 = delta_R2$se_D,
+      se_D_R3 = delta_R3$se_D,
+      se_D_S1 = delta_S1$se_D,
+      se_D_S2 = delta_S2$se_D,
+      se_D_O1 = delta_O1$se_D,
+      se_D_O2 = delta_O2$se_D,
+      se_D_striplet = delta_striplet$se_D
+    )
+  }
+  
+  # Return final integrated list
   list(
-    detection_model = m1,
-    dsm = dsm1,
-    N_hat = N_hat,
-    se_m1 = se_ds,
-    sigma_hat = sigma_hat,
-    obsdata = obsdata,
-    segdata = segdata,
-    density_surface = dsm_surface,
-    density = gam.density,
-    population_description = pop.desc
+    detection_model = m1, dsm = dsm1, N_hat = N_hat, se_m1 = se_ds, 
+    sigma_hat = sigma_hat, obsdata = obsdata, segdata = segdata, 
+    density_surface = dsm_surface, density = gam.density, 
+    population_description = pop.desc, 
+    analytical_variances = analytical_variances
   )
 }
+
 
 ## uses the population from get_fit, sigma hat from the ds() model,
 ## and the survey design to generate an estimated N_hat 
