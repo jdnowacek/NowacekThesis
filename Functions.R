@@ -222,6 +222,7 @@ get_fit <- function(dist_data,
   samplers <- transects@samplers
   
   # pulls the geometry of the transects for lines or points
+  # calculates effort using line length
   if (transect_type == "line") {
     # Suppress the centroid warning for constant attributes
     # sf::st_agr(samplers) <- "constant" 
@@ -260,6 +261,8 @@ get_fit <- function(dist_data,
   ## dsm() models ----- 
   
   # fits the density surface models
+  # different for lines than for points bc we have already grouped the lines
+  # to the point that there is no information for the y part of the smooth
   if (transect_type == "line") {
     dsm1 <- dsm(
       count ~ s(x), # 1D smooth for lines
@@ -297,7 +300,9 @@ get_fit <- function(dist_data,
   pred_data <- sf::st_drop_geometry(pred_grid)
   
   predictions <- predict(dsm1, newdata = pred_data, off.set = pred_grid$area, type = "response")
-  pred_grid <- pred_grid |> mutate(N_hat_pred = as.numeric(predictions))
+  
+  pred_grid <- pred_grid |> 
+    mutate(N_hat_pred = as.numeric(predictions))
   
   ## dsm surface from preds ----- 
   
@@ -320,6 +325,8 @@ get_fit <- function(dist_data,
       select(strata, density, x, y, N_hat_pred, area, geometry)
   }
   
+  ## density, pop from surface -----
+  
   est.density <- make.density(
     region = region, 
     x.space = x_space, 
@@ -332,14 +339,24 @@ get_fit <- function(dist_data,
     N = N_hat, 
     fixed.N = TRUE)
   
+  ## variance estimators ----
+  
+  # empty object for variance estimate storage
   analytical_variances <- NULL
   
-  ## Additional section for striplet estimator for line transects. Needs work
-  
+  # sets up a section where variances from striplet estimator,
+  # as well as 2009 Fewster variance estimators can be calculated
+  # uses fewster code from her email
   if (transect_type == "line") {
     
-    obs_counts <- obsdata |> group_by(Sample.Label) |> summarize(count = sum(size), .groups = "drop")
-    line_data <- segdata |> left_join(obs_counts, by = "Sample.Label") |> mutate(count = replace_na(count, 0))
+    obs_counts <- obsdata |> 
+      group_by(Sample.Label) |> 
+      summarize(count = sum(size), 
+                .groups = "drop")
+    
+    line_data <- segdata |> 
+      left_join(obs_counts, by = "Sample.Label") |> 
+      mutate(count = replace_na(count, 0))
     
     nspotted <- line_data$count
     lvec <- line_data$Effort
@@ -347,11 +364,13 @@ get_fit <- function(dist_data,
     k <- length(lvec)
     ntot <- sum(nspotted)
     
-    # 7b. Empirical Estimators (R2, R3, S1, S2, O1, O2)
+    # Empirical Estimators (R2, R3, S1, S2, O1, O2)
+    
+    ## R2, R3
     var.R2 <- (k * sum(lvec^2 * (nspotted/lvec - ntot/L)^2)) / (L^2 * (k - 1))
     var.R3 <- 1 / (L * (k - 1)) * sum(lvec * (nspotted/lvec - ntot/L)^2)
     
-    # Stratified (S1, S2)
+    ## Stratified (S1, S2)
     H_strat <- floor(k/2)
     k.h <- rep(2, H_strat)
     if(k %% 2 > 0) k.h[H_strat] <- 3
@@ -375,7 +394,7 @@ get_fit <- function(dist_data,
     var.S1 <- sum.S1 / L^2
     var.S2 <- sum.S2 / L^2
     
-    # Overlapping (O1, O2)
+    ## Overlapping (O1, O2)
     lvec.1 <- lvec[-k]; lvec.2 <- lvec[-1]
     nvec.1 <- nspotted[-k]; nvec.2 <- nspotted[-1]
     ervec.1 <- nvec.1/lvec.1; ervec.2 <- nvec.2/lvec.2
@@ -383,8 +402,8 @@ get_fit <- function(dist_data,
     var.O1 <- k / (2 * L^2 * (k - 1)) * sum((nvec.1 - nvec.2 - ntot/L * (lvec.1 - lvec.2))^2)
     var.O2 <- (2 * k) / (L^2 * (k - 1)) * sum(((lvec.1 * lvec.2)/(lvec.1 + lvec.2))^2 * (ervec.1 - ervec.2)^2)
     
-    ## The Exact Striplet Variance (Grid-Shift Loop)
     
+    ## Striplet Variance
     muvec <- dsm_surface$N_hat_pred 
     midvec <- dsm_surface$x
     musum <- sum(muvec, na.rm = TRUE)
@@ -426,7 +445,7 @@ get_fit <- function(dist_data,
     D_hat <- N_hat / Region_Area
     erhat <- ntot / L
     
-    # Delta Method Combiner Function (Matches Fewster exactly)
+    # Delta Method Combiner Function
     apply_delta <- function(var_ER) {
       cv_ER_sq <- var_ER / (erhat^2)
       var_N <- (N_hat^2) * (cv_ER_sq + cv_Pa_sq)

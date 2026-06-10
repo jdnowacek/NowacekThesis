@@ -6,7 +6,7 @@
 # of the region is not v=1.  It seems to be partially encoded, but (e.g.) the boxlet boundaries don't seem
 # to be done.  Have to go through the code carefully to fix this scenario.
 
-library(DSpat)
+# library(DSpat)
 library(mgcv)
 library(akima)  # for interp
 
@@ -616,7 +616,8 @@ mgcv.boxlet.func <- function(whkmNpars, cluster, Nsurv=1000, v=1, sx=max(1, roun
                                                     ## points(box.dat$x, box.dat$lambda, pch=16)
                                                     ## title(main="Marginal x : boxlets red, boxes black")
                                                     ##
-                                                    ## plot(boxlet.dat$y, boxlet.dat$lambda, pch=16, cex=0.5, col=2, ylim=c(0, zbig))
+                                                    ## plot(boxlet.dat$y, boxlet.dat$lambda, pch=16, cex=0.5, 
+			                                                      # col=2, ylim=c(0, zbig))
                                                     ## points(box.dat$y, box.dat$lambda, pch=16)
                                                     ## title(main="Marginal y : boxlets red, boxes black")
 			##
