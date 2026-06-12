@@ -43,7 +43,7 @@ evaluate_convergence <- function(transect_type, hotspot_name) {
   my_hotspots <- if(hotspot_name == "Mild") hotspots_mild else hotspots_extreme
   
   # 2. Generate Truth & Survey
-  sim_truth <- generate_simulated_truth(
+  sim_truth <- generate_simulated_pop(
     region = region, 
     N = true_N, 
     hotspots = my_hotspots, 

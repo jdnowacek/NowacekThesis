@@ -63,13 +63,13 @@ density_true <- make_hotspot_density(region, my_hotspots)
 ## True population
 
 ```{r}
-truth <- generate_simulated_truth(region)
+sim_pop<- generate_simulated_pop(region)
 
-# FIX: Map these to the exact names exported by the list in get_simulated_truth()
-density <- truth$density
-population_description <- truth$population_description
-population <- truth$population
-detectability <- truth$detectability
+# FIX: Map these to the exact names exported by the list in get_simulated_pop()
+density <- sim_pop$density
+population_description <- sim_pop$population_description
+population <- sim_pop$population
+detectability <- sim_pop$detectability
 ```
 
 ## Survey
@@ -79,7 +79,7 @@ generates the iteration of survey data analogous to real data collection
 ```{r}
 survey_data_lines <- generate_survey_data(
   region = region,
-  realized_population = truth$population,
+  realized_population = sim_pop$population,
   transect_type = points_or_lines
 )
 

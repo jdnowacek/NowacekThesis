@@ -50,8 +50,6 @@ make_hotspot_density <- function(region,
                                        centre = hotspot$centre,
                                        sigma = hotspot$sigma,
                                        amplitude = hotspot$amplitude)
-    
-    return(density_true)
   }
   
   ## Hotspots should come in a list like this
@@ -60,6 +58,8 @@ make_hotspot_density <- function(region,
   # list(centre = c(5000, 2000), sigma = 6000, amplitude = 0.5),
   # list(centre = c(8000, 9000), sigma = 1000, amplitude = 2)
   # )
+  
+  return(density_true)
 }
 
 ## Generates;
@@ -68,7 +68,7 @@ make_hotspot_density <- function(region,
 ## detectability from the scale parameter and truncation distance
 ## population iteration from the population description, detecability, and region
 
-generate_simulated_truth <- function(region,
+generate_simulated_pop <- function(region,
                                      N = true_N,
                                      x_space = density_grid_spacing,
                                      hotspots = my_hotspots,
@@ -119,7 +119,7 @@ generate_simulated_truth <- function(region,
   )
 }
 
-## Generates survey data from the population specified in generate simulated truth
+## Generates survey data from the population specified in generate simulated pop
 ## Allows for different survey types (points or lines)
 ## returns survey design object, 
 ## transects from that design,
@@ -127,7 +127,7 @@ generate_simulated_truth <- function(region,
 
 generate_survey_data <- function(region,
                                  realized_population, 
-                                 # output from (generate_simulated_truth_object)$population
+                                 # output from (generate_simulated_pop_object)$population
                                  angle = design_angle,
                                  transect_type = points_or_lines,
                                  spacing = design_spacing,

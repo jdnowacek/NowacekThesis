@@ -1,0 +1,221 @@
+---
+title: "Variance Comparison"
+format: pdf
+---
+
+Builds a test of our different variance options to see which compares best to true variance
+
+- True variance comes from many iterations of:
+
+  - Run a survey with a random start point on the 'true' population
+
+  - Analyze with ds()
+
+  - The variance of those many N_hat estimates from ds() is the true variance.
+
+- Analytical variances, striplets, come from get_fit()
+
+- Bootstrap estimates of N_hat from
+
+1.  Create true density surface
+
+-- alternate outer loop start --
+
+1.  Simulate true population from that surface
+
+-- outer loop start --
+
+1.  Run a survey on that population (random start point)
+
+2.  analyze with ds()
+
+    1.  store N_hat
+
+3.  Use ds() model results and survey data to create a dsm()
+
+4.  simulate a population from that dsm()
+
+5.  Calculate analytical variance estimators
+
+-- inner loop start --
+
+1.  Run bootstrap simulation models on estimated population to approx. striplets/analytical variances
+
+-- inner loop end --
+
+-- outer loop end --
+
+# Packages
+
+```{r}
+library(tidyverse)
+library(dsims)
+library(Distance)
+library(dssd)
+library(dsm)
+library(sf)
+library(mgcv)
+library(knitr)
+```
+
+# Import Functions
+
+```{r}
+source(here::here("Functions.R"))
+```
+
+# Constants
+
+```{r}
+true_N <- 5000
+
+points_or_lines = "line"
+
+trunc_dist <- 750
+scale_parameter <- 200
+design_spacing <- 750
+
+density_grid_spacing <- 500
+
+design_angle <- 0
+```
+
+# Code
+
+## Region
+
+```{r}
+region <- make_region(0, 10000, 0, 10000, "m")
+plot(region)
+```
+
+## Density
+
+```{r}
+my_hotspots <- list(
+  list(centre = c(2000, 8000), sigma = 800, amplitude = 1.2),
+  list(centre = c(5000, 2000), sigma = 6000, amplitude = 0.5),
+  list(centre = c(8000, 9000), sigma = 1000, amplitude = 2)
+)
+
+density_true <- make_hotspot_density(region, my_hotspots)
+# plot(density_true, region, scale = 0.001)
+
+density_sf <- density_true@density.surface[[1]]
+
+ggplot(density_sf) +
+  geom_sf(aes(fill = density), color = NA) +
+  scale_fill_viridis_c(option = "viridis", name = "Density") +
+  theme_bw() +
+  labs(title = "Simulated Density Surface")
+```
+
+## True population
+
+```{r}
+sim_pop<- generate_simulated_pop(region)
+
+# FIX: Map these to the exact names exported by the list in get_simulated_pop()
+density <- sim_pop$density
+population_description <- sim_pop$population_description
+population <- sim_pop$population
+detectability <- sim_pop$detectability
+```
+
+## Analysis Loop
+
+```{r}
+outer_loop_reps <- 10
+bootstrap_reps <- 50
+
+results <- data.frame(
+  rep          = integer(outer_loop_reps),
+  N_hat        = numeric(outer_loop_reps), # Usually good practice to keep the abundance estimate too
+  se_R2        = numeric(outer_loop_reps),
+  se_R3        = numeric(outer_loop_reps),
+  se_S1        = numeric(outer_loop_reps),
+  se_S2        = numeric(outer_loop_reps),
+  se_O1        = numeric(outer_loop_reps),
+  se_O2        = numeric(outer_loop_reps),
+  se_striplet  = numeric(outer_loop_reps),
+  se_bootstrap = numeric(outer_loop_reps)
+)
+
+for (i in 1:outer_loop_reps) {
+  
+  cat(sprintf("Running iteration %d of %d...\n", i, outer_loop_reps))
+  
+  ## Survey
+  
+  survey_data_lines <- generate_survey_data(
+    region = region,
+    realized_population = sim_pop$population,
+    transect_type = points_or_lines
+    )
+  
+  design <- survey_data_lines$design
+  transects <- survey_data_lines$transects
+  samplers <- transects@samplers
+  
+  ## Fit
+  
+  fit_lines <- get_fit(
+    dist_data = survey_data_lines$dist_data,
+    transects = survey_data_lines$transects,
+    region = region,
+    transect_type = points_or_lines
+  )
+  
+  obs_data <- fit_lines$obsdata
+  seg_data <- fit_lines$segdata
+  dsm1 <- fit_lines$dsm
+  density_surface <- fit_lines$density_surface
+  
+  R2_est <- fit_lines$analytical_variances$se_N_R2
+  R3_est <- fit_lines$analytical_variances$se_N_R3
+  S1_est <- fit_lines$analytical_variances$se_N_S1
+  S2_est <- fit_lines$analytical_variances$se_N_S2
+  O1_est <- fit_lines$analytical_variances$se_N_O1
+  O2_est <- fit_lines$analytical_variances$se_N_O2
+  striplet_est <- fit_lines$analytical_variances$se_N_striplet
+  
+  ## Bootstraps
+  
+  bootstraps <- get_bootstrap(
+    region = region,
+    population_description = fit_lines$population_description,
+    sigma_hat = fit_lines$sigma_hat,
+    transect_type = points_or_lines,
+    reps = bootstrap_reps
+  )
+  
+  bootstrap_est <- sd(bootstraps$N_hat)
+  
+  results$rep[i]          <- i
+  results$N_hat[i]        <- fit_lines$N_hat # Storing the point estimate from the model for reference
+  results$se_R2[i]        <- R2_est
+  results$se_R3[i]        <- R3_est
+  results$se_S1[i]        <- S1_est
+  results$se_S2[i]        <- S2_est
+  results$se_O1[i]        <- O1_est
+  results$se_O2[i]        <- O2_est
+  results$se_striplet[i]  <- striplet_est
+  results$se_bootstrap[i] <- bootstrap_est
+}
+```
+
+```{r}
+results |>
+  summarise(gold_standard = sd(N_hat),
+            R2 = mean(se_R2),
+            R3 = mean(se_R3),
+            S1 = mean(se_S1),
+            S2 = mean(se_S2),
+            O1 = mean(se_O1),
+            O2 = mean(se_O2),
+            striplet = mean(se_striplet),
+            bootstrap = mean(se_bootstrap)) |>
+  kable(digits = 3)
+```
+
+
