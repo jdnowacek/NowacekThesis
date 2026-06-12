@@ -1,8 +1,6 @@
 source(here::here("Functions.R"))
 
-# -----------------------------------------------------------------------
-# 1. Setup Constants & Scenario Grid
-# -----------------------------------------------------------------------
+# Setup Constants & Scenario Grid -----
 
 # Area boundaries for the simulation (e.g., a 10km x 10km grid)
 lower_x <- 0; upper_x <- 10000
@@ -14,7 +12,7 @@ density_grid_spacing <- 500
 scale_parameter <- 250
 trunc_dist <- 500
 design_angle <- 0
-MAX_BOOT_REPS <- 100 # The ceiling for our convergence test
+MAX_BOOT_REPS <- 1000 
 
 # Define two different spatial distributions
 hotspots_mild <- list(
@@ -33,9 +31,7 @@ scenarios <- expand_grid(
   hotspot_name = c("Mild", "Extreme")
 )
 
-# -----------------------------------------------------------------------
-# 2. Convergence Evaluation Function
-# -----------------------------------------------------------------------
+# 2. Convergence Evaluation Function -----
 
 evaluate_convergence <- function(transect_type, hotspot_name) {
   
@@ -103,9 +99,7 @@ evaluate_convergence <- function(transect_type, hotspot_name) {
   )
 }
 
-# -----------------------------------------------------------------------
-# 3. Execution and Visualization
-# -----------------------------------------------------------------------
+# Execution and Visualization -----
 
 # Use purrr::pmap_dfr to loop over the scenarios dataframe and bind results
 convergence_results <- purrr::pmap_dfr(

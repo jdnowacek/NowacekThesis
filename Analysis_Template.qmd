@@ -28,7 +28,7 @@ source(here::here("Functions.R"))
 ```{r}
 true_N <- 5000
 
-points_or_lines = "point"
+points_or_lines = "line"
 
 trunc_dist <- 750
 scale_parameter <- 200
@@ -65,10 +65,11 @@ density_true <- make_hotspot_density(region, my_hotspots)
 ```{r}
 truth <- generate_simulated_truth(region)
 
-density <- truth$density_true
-population_description <- truth$pop.desc_true
-population <- truth$pop_true
-detectability <- truth$detect_true
+# FIX: Map these to the exact names exported by the list in get_simulated_truth()
+density <- truth$density
+population_description <- truth$population_description
+population <- truth$population
+detectability <- truth$detectability
 ```
 
 ## Survey
@@ -117,13 +118,6 @@ bootstraps <- get_bootstrap(
 est <- sd(bootstraps$N_hat)
 est
 ```
-
-
-
-
-
-
-
 
 
 

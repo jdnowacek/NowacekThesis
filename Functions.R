@@ -26,9 +26,11 @@ make_region <- function(lower_x_bound,
     sf::st_as_sf()
   
   # make region with dssd
-  region <- dssd::make.region(region.name = "region",
+  region <- make.region(region.name = "region",
                               shape = simsquare,
                               units = units)
+  
+  return(region)
 }
 
 ## Make theoretical density of animals
@@ -48,6 +50,8 @@ make_hotspot_density <- function(region,
                                        centre = hotspot$centre,
                                        sigma = hotspot$sigma,
                                        amplitude = hotspot$amplitude)
+    
+    return(density_true)
   }
   
   ## Hotspots should come in a list like this
@@ -56,8 +60,6 @@ make_hotspot_density <- function(region,
   # list(centre = c(5000, 2000), sigma = 6000, amplitude = 0.5),
   # list(centre = c(8000, 9000), sigma = 1000, amplitude = 2)
   # )
-  
-  return(density_true)
 }
 
 ## Generates;
