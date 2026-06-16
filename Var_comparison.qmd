@@ -75,7 +75,7 @@ true_N <- 5000
 points_or_lines = "line"
 
 trunc_dist <- 750
-scale_parameter <- 200
+scale_parameter <- 5000
 design_spacing <- 750
 
 density_grid_spacing <- 500
@@ -112,6 +112,43 @@ ggplot(density_sf) +
   theme_bw() +
   labs(title = "Simulated Density Surface")
 ```
+## Test Survey
+
+```{r}
+test_sim_pop <- generate_simulated_pop(region, scale_param = scale_parameter)
+
+test_population_description <- test_sim_pop$population_description
+test_detectability <- test_sim_pop$detectability
+
+test_survey_data_lines <- generate_survey_data(
+  region = region,
+  realized_population = test_sim_pop$population,
+  transect_type = points_or_lines
+)
+
+test_design <- test_survey_data_lines$design
+
+test_analyses <- make.ds.analysis(dfmodel = ~ 1,
+                             key = "hn",
+                             truncation = 750,
+                             criteria = "AIC")
+
+test_sim <- make.simulation(reps = 3,
+                                design = test_design,
+                                population.description = test_population_description,
+                                detectability = test_detectability,
+                                ds.analysis = test_analyses)
+
+# Generate a single instance of a survey: a population, set of transects
+# and the resulting distance data
+test_survey <- run.survey(test_sim)
+
+# Plot it to view a summary
+plot(test_survey, region)
+```
+```
+
+
 
 ## Computing Speed
 
@@ -128,8 +165,8 @@ plan(multisession, workers = workers_to_use)
 ## Analysis Loop
 
 ```{r}
-outer_loop_reps <- 200
-bootstrap_reps <- 1000
+outer_loop_reps <- 20
+bootstrap_reps <- 100
 
 # Using future_map_dfr instead of a for-loop for speed
 results <- future_map_dfr(1:outer_loop_reps, function(i) {
