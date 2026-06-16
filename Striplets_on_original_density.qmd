@@ -1,0 +1,142 @@
+---
+title: "Striplets_on_original_density"
+format: html
+---
+
+# Packages
+
+```{r}
+library(tidyverse)
+library(dsims)
+library(Distance)
+library(dssd)
+library(dsm)
+library(sf)
+library(mgcv)
+```
+
+# Import Functions
+
+```{r}
+source(here::here("Functions.R"))
+```
+
+# Constants
+
+```{r}
+# true_N <- 5000
+# 
+# points_or_lines = "line"
+ 
+trunc_dist <- 750
+scale_parameter <- 200
+design_spacing <- 750
+ 
+density_grid_spacing <- 500
+ 
+# design_angle <- 0
+# bootstrap_reps <- 20
+```
+
+# Code
+
+## Region
+
+```{r}
+region <- make_region(0, 10000, 0, 10000, "m")
+```
+
+## Density
+
+```{r}
+my_hotspots <- list(
+  list(centre = c(2000, 8000), sigma = 800, amplitude = 1.2),
+  list(centre = c(5000, 2000), sigma = 6000, amplitude = 0.5),
+  list(centre = c(8000, 9000), sigma = 1000, amplitude = 2)
+)
+
+density_true <- make_hotspot_density(region, my_hotspots)
+```
+
+## prediction from density
+
+```{r}
+# Extract the true density surface and calculate expected N per cell
+true_surface <- density_true@density.surface[[1]] |>
+  mutate(
+    area = as.numeric(sf::st_area(geometry)),
+    N_hat_pred = density * area
+  )
+
+# Collapse to 1D (x-axis) for line transects
+true_surface_1D <- true_surface |>
+  group_by(strata, x) |>
+  summarize(
+    N_hat_pred = sum(N_hat_pred, na.rm = TRUE),
+    area = sum(area, na.rm = TRUE),
+    geometry = sf::st_union(geometry),
+    .groups = "drop"
+  ) |>
+  mutate(density = pmax(N_hat_pred / area, .Machine$double.eps), y = 0) |>
+  select(strata, density, x, y, N_hat_pred, area, geometry)
+```
+
+## Striplet code
+
+```{r}
+spacing <- design_spacing
+sigma_hat <- scale_parameter
+truncation <- trunc_dist
+
+muvec <- true_surface_1D$N_hat_pred 
+midvec <- true_surface_1D$x
+musum <- sum(muvec, na.rm = TRUE)
+
+bbox <- sf::st_bbox(region@region)
+y_length <- as.numeric(bbox["ymax"] - bbox["ymin"])
+x_min <- as.numeric(bbox["xmin"])
+x_max <- as.numeric(bbox["xmax"])
+
+B <- 50 
+bvec <- seq(0, spacing, length.out = B)
+Lbvec <- rep(0, B)
+Abvec <- rep(0, B)
+
+for (b_idx in 1:B) {
+  b_val <- bvec[b_idx]
+  lines_grid <- seq(x_min + b_val, x_max, by = spacing)
+  Lbvec[b_idx] <- length(lines_grid) * y_length
+  
+  min_dist <- sapply(midvec, function(m) min(abs(m - lines_grid)))
+  
+  g_b <- exp(- (min_dist^2) / (2 * sigma_hat^2))
+  g_b[min_dist > truncation] <- 0 
+  
+  Abvec[b_idx] <- sum(muvec * g_b, na.rm = TRUE)
+}
+    
+var_ER_striplet <- mean((Abvec + (Abvec^2) * (1 - 1/musum)) / (Lbvec^2)) - (mean(Abvec / Lbvec))^2
+```
+
+since we dont have detections in this set-up as we are coming straight from the denisty, there is no other piece to the variance, it is just the encounter rate variance. Need to reason through what this means in isolation.
+
+var_ER_striplet here is 209.6853
+
+single fixed estimate, no variation since the density does not change. 
+
+When run with the same settings, the var_ER_striplet in the main code, which factors in changing density estimates from the dsm() model is around: HAPPY TO EXPLORE THIS, WANTED TO CHECK BEFORE I DID SO
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

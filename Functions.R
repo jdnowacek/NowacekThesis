@@ -366,7 +366,7 @@ get_fit <- function(dist_data,
     k <- length(lvec)
     ntot <- sum(nspotted)
     
-    # Empirical Estimators (R2, R3, S1, S2, O1, O2)
+    ### Empirical Estimators (R2, R3, S1, S2, O1, O2) -----
     
     ## R2, R3
     var.R2 <- (k * sum(lvec^2 * (nspotted/lvec - ntot/L)^2)) / (L^2 * (k - 1))
@@ -405,7 +405,7 @@ get_fit <- function(dist_data,
     var.O2 <- (2 * k) / (L^2 * (k - 1)) * sum(((lvec.1 * lvec.2)/(lvec.1 + lvec.2))^2 * (ervec.1 - ervec.2)^2)
     
     
-    ## Striplet Variance
+    ## Striplet Variance -----
     muvec <- dsm_surface$N_hat_pred 
     midvec <- dsm_surface$x
     musum <- sum(muvec, na.rm = TRUE)

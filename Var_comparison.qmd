@@ -75,7 +75,7 @@ true_N <- 5000
 points_or_lines = "line"
 
 trunc_dist <- 750
-scale_parameter <- 5000
+scale_parameter <- 200
 design_spacing <- 750
 
 density_grid_spacing <- 500
@@ -162,8 +162,8 @@ plan(multisession, workers = workers_to_use)
 ## Analysis Loop
 
 ```{r}
-outer_loop_reps <- 20
-bootstrap_reps <- 100
+outer_loop_reps <- 100
+bootstrap_reps <- 250
 
 # Using future_map_dfr instead of a for-loop for speed
 results <- future_map_dfr(1:outer_loop_reps, function(i) {
