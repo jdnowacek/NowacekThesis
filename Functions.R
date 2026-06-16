@@ -13,32 +13,52 @@ library(mgcv)
 ## Generates a study region based on upper and lower x and y bounds 
 ## and allows for units to be specified
 
-make_region <- function(lower_x_bound,
-                        upper_x_bound,
-                        lower_y_bound,
-                        upper_y_bound,
-                        units) {
+# make_region <- function(lower_x_bound,
+#                         upper_x_bound,
+#                         lower_y_bound,
+#                         upper_y_bound,
+#                         units) {
+#   
+#   # create survey sf object
+#   simsquare <- sf::st_bbox(c(xmin = lower_x_bound, xmax = upper_x_bound, 
+#                              ymin = lower_y_bound, ymax = upper_y_bound)) |> 
+#     sf::st_as_sfc() |> 
+#     sf::st_as_sf()
+#   
+#   # make region with dssd
+#   region <- make.region(region.name = "region",
+#                               shape = simsquare,
+#                               units = units)
+#   
+#   return(region)
+# }
+
+make_region <- function(region_sf = NULL, 
+                        lower_x_bound = 0, upper_x_bound = 0, 
+                        lower_y_bound = 0, upper_y_bound = 0, 
+                        units = "m") { 
   
-  # create survey sf object
-  simsquare <- sf::st_bbox(c(xmin = lower_x_bound, xmax = upper_x_bound, 
-                             ymin = lower_y_bound, ymax = upper_y_bound)) |> 
-    sf::st_as_sfc() |> 
-    sf::st_as_sf()
+    # if not custom region, use bounds to create rectangle
+    if (is.null(region_sf)) {
+    region_sf <- sf::st_bbox(c(xmin = lower_x_bound, xmax = upper_x_bound, 
+                               ymin = lower_y_bound, ymax = upper_y_bound)) |> 
+      sf::st_as_sfc() |> 
+      sf::st_as_sf()
+  }
   
-  # make region with dssd
   region <- make.region(region.name = "region",
-                              shape = simsquare,
-                              units = units)
-  
+                        shape = region_sf,
+                        units = units)
   return(region)
 }
 
 ## Make theoretical density of animals
 ## using iterative hotspots added to the densities
 
-make_hotspot_density <- function(region,
-                         hotspots,
-                         x_space = density_grid_spacing) {
+make_hotspot_density <- function(region, 
+                                 hotspots, 
+                                 x_space = density_grid_spacing,
+                                 plot_density = FALSE) {
   
   # Create basic uniform density
   density_true <- dsims::make.density(region = region,
@@ -50,6 +70,14 @@ make_hotspot_density <- function(region,
                                        centre = hotspot$centre,
                                        sigma = hotspot$sigma,
                                        amplitude = hotspot$amplitude)
+    
+    # Added visual check
+    if (plot_density) {
+      # Uses dsims native plot method
+      plot(density_true, region) 
+    }
+    
+    return(density_true)
   }
   
   ## Hotspots should come in a list like this
@@ -423,7 +451,26 @@ get_fit <- function(dist_data,
     for (b_idx in 1:B) {
       b_val <- bvec[b_idx]
       lines_grid <- seq(x_min + b_val, x_max, by = spacing)
-      Lbvec[b_idx] <- length(lines_grid) * y_length
+      
+      
+      
+      # old version
+      # Lbvec[b_idx] <- length(lines_grid) * y_length
+      
+      # new version
+      # Build theoretical vertical sf lines extending across the bounding box
+      line_strings <- lapply(lines_grid, function(x) {
+        sf::st_linestring(matrix(c(x, bbox["ymin"], x, bbox["ymax"]), ncol = 2, byrow = TRUE))
+      })
+      lines_sf <- sf::st_sfc(line_strings, crs = sf::st_crs(region@region))
+      
+      # Clip the theoretical lines to the exact boundary of the irregular region
+      clipped_lines <- suppressWarnings(sf::st_intersection(lines_sf, region@region))
+      
+      # Calculate exact line length inside the polygon bounds
+      Lbvec[b_idx] <- as.numeric(sum(sf::st_length(clipped_lines)))
+      
+      
       
       min_dist <- sapply(midvec, function(m) min(abs(m - lines_grid)))
       
