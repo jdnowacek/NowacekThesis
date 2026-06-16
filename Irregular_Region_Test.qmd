@@ -1,0 +1,166 @@
+---
+title: "Irregular_Region_Test"
+format: html
+---
+
+Document to test out the "Functions.R" file and see how the estimators perform.
+
+# Packages
+
+```{r}
+library(tidyverse)
+library(dsims)
+library(Distance)
+library(dssd)
+library(dsm)
+library(sf)
+library(mgcv)
+```
+
+# Import Functions
+
+```{r}
+source(here::here("Functions.R"))
+```
+
+# Constants
+
+```{r}
+true_N <- 2500
+
+points_or_lines = "line"
+
+trunc_dist <- 750
+scale_parameter <- 200
+design_spacing <- 1500
+
+density_grid_spacing <- 500
+
+design_angle <- 0
+bootstrap_reps <- 20
+```
+
+# Code
+
+## Region
+
+```{r}
+# region <- make_region(0, 10000, 0, 10000, "m")
+
+# Find the file path to the example shapefile in dssd
+shapefile.name <- system.file("extdata", "StAndrew.shp", package = "dssd")
+# Create the survey region object
+region <- make.region(region.name = "St Andrews bay",
+                      shape = shapefile.name,
+                      units = "m")
+plot(region)
+```
+
+## Density
+
+```{r}
+my_hotspots <- list(
+  list(centre = c(-165000, 6255000), sigma = 4000, amplitude = 1.2),
+  list(centre = c(-145000, 6240000), sigma = 10000, amplitude = 0.9),
+  list(centre = c(-155000, 6270000), sigma = 5000, amplitude = 2)
+)
+
+density_true <- make_hotspot_density(region, my_hotspots)
+
+plot(density_true, region)
+```
+
+## True population
+
+```{r}
+sim_pop<- generate_simulated_pop(region)
+
+# FIX: Map these to the exact names exported by the list in get_simulated_pop()
+density <- sim_pop$density
+population_description <- sim_pop$population_description
+population <- sim_pop$population
+detectability <- sim_pop$detectability
+```
+
+## Survey
+
+generates the iteration of survey data analogous to real data collection
+
+```{r}
+survey_data_lines <- generate_survey_data(
+  region = region,
+  realized_population = sim_pop$population,
+  transect_type = points_or_lines
+)
+
+design <- survey_data_lines$design
+transects <- survey_data_lines$transects
+samplers <- transects@samplers
+
+plot(region, survey_data_lines$transects)
+```
+
+## Simulation Single Run Test
+
+```{r}
+# 1. Define the distance sampling analysis method (required to build a simulation)
+analyses <- make.ds.analysis(
+  dfmodel = ~ 1,
+  key = "hn",
+  truncation = trunc_dist,
+  criteria = "AIC"
+)
+
+# 2. Build the simulation object using the components already in your environment
+sim_test <- make.simulation(
+  reps = 1, # Only 1 rep needed for a visual diagnostic check
+  design = survey_data_lines$design,
+  population.description = sim_pop$population_description,
+  detectability = sim_pop$detectability,
+  ds.analysis = analyses
+)
+
+# 3. Generate a single instance of a survey (population, transects, and distance data)
+eg_survey <- run.survey(sim_test)
+
+# 4. Plot it to visually verify the detections against the irregular region
+plot(eg_survey, region)
+```
+
+
+## Fit 
+
+```{r}
+fit_lines <- get_fit(
+  dist_data = survey_data_lines$dist_data,
+  transects = survey_data_lines$transects,
+  region = region,
+  transect_type = points_or_lines
+)
+
+obs_data <- fit_lines$obsdata
+seg_data <- fit_lines$segdata
+dsm1 <- fit_lines$dsm
+density_surface <- fit_lines$density_surface
+```
+
+## Bootstraps
+
+```{r}
+bootstraps <- get_bootstrap(
+  region = region,
+  population_description = fit_lines$population_description,
+  sigma_hat = fit_lines$sigma_hat,
+  transect_type = points_or_lines,
+  reps = bootstrap_reps
+)
+
+est <- sd(bootstraps$N_hat)
+est
+```
+
+
+
+
+
+

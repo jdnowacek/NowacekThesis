@@ -57,8 +57,7 @@ make_region <- function(region_sf = NULL,
 
 make_hotspot_density <- function(region, 
                                  hotspots, 
-                                 x_space = density_grid_spacing,
-                                 plot_density = FALSE) {
+                                 x_space = density_grid_spacing) {
   
   # Create basic uniform density
   density_true <- dsims::make.density(region = region,
@@ -70,12 +69,7 @@ make_hotspot_density <- function(region,
                                        centre = hotspot$centre,
                                        sigma = hotspot$sigma,
                                        amplitude = hotspot$amplitude)
-    
-    # Added visual check
-    if (plot_density) {
-      # Uses dsims native plot method
-      plot(density_true, region) 
-    }
+  }
     
     return(density_true)
   }
@@ -86,9 +80,6 @@ make_hotspot_density <- function(region,
   # list(centre = c(5000, 2000), sigma = 6000, amplitude = 0.5),
   # list(centre = c(8000, 9000), sigma = 1000, amplitude = 2)
   # )
-  
-  return(density_true)
-}
 
 ## Generates;
 ## true density surface using hotspot density above,
@@ -315,6 +306,9 @@ get_fit <- function(dist_data,
     )
   }
   
+  
+  # Old Version
+  
   ## prediction from dsm() ----- 
   
   prediction_grid <- make.density(
@@ -332,7 +326,24 @@ get_fit <- function(dist_data,
   predictions <- predict(dsm1, newdata = pred_data, off.set = pred_grid$area, type = "response")
   
   pred_grid <- pred_grid |> 
-    mutate(N_hat_pred = as.numeric(predictions))
+    mutate(N_hat_pred = as.numeric(predictions),
+           density = pmax(N_hat_pred / area, .Machine$double.eps))
+  
+  ## density, pop from surface -----
+  
+  est.density <- make.density(
+    region = region, 
+    x.space = x_space, 
+    y.space = y_space, 
+    density.surface = pred_grid
+  )
+  
+  pop.desc <- make.population.description(
+    region = region, 
+    density = est.density, 
+    N = N_hat, 
+    fixed.N = TRUE
+  )
   
   ## dsm surface from preds ----- 
   
@@ -351,23 +362,8 @@ get_fit <- function(dist_data,
     
   } else {
     dsm_surface <- pred_grid |> 
-      mutate(density = pmax(N_hat_pred / area, .Machine$double.eps)) |> 
       select(strata, density, x, y, N_hat_pred, area, geometry)
   }
-  
-  ## density, pop from surface -----
-  
-  est.density <- make.density(
-    region = region, 
-    x.space = x_space, 
-    y.space = y_space, 
-    density.surface = dsm_surface)
-  
-  pop.desc <- make.population.description(
-    region = region, 
-    density = est.density, 
-    N = N_hat, 
-    fixed.N = TRUE)
   
   ## variance estimators ----
   
