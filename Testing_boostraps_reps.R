@@ -1,8 +1,13 @@
 source(here::here("Functions.R"))
 
+# Load necessary parallel packages
+library(future)
+library(furrr)
+library(parallel)
+
 # Setup Constants & Scenario Grid -----
 
-# Area boundaries for the simulation (e.g., a 10km x 10km grid)
+# region params
 lower_x <- 0; upper_x <- 10000
 lower_y <- 0; upper_y <- 10000
 
@@ -12,9 +17,9 @@ density_grid_spacing <- 500
 scale_parameter <- 250
 trunc_dist <- 500
 design_angle <- 0
-MAX_BOOT_REPS <- 1000 
+MAX_BOOT_REPS <- 10000
 
-# Define two different spatial distributions
+# Define two different densities
 hotspots_mild <- list(
   list(centre = c(5000, 5000), sigma = 3000, amplitude = 1)
 )
@@ -31,12 +36,13 @@ scenarios <- expand_grid(
   hotspot_name = c("Mild", "Extreme")
 )
 
-# 2. Convergence Evaluation Function -----
+# Convergence Evaluation Function -----
 
 evaluate_convergence <- function(transect_type, hotspot_name) {
   
-  cat(sprintf("Running Scenario: %s Transects with %s Hotspots...\n", 
-              toupper(transect_type), toupper(hotspot_name)))
+  # Note: cat() output might not print to console sequentially in parallel processing
+  message(sprintf("Running Scenario: %s Transects with %s Hotspots...", 
+                  toupper(transect_type), toupper(hotspot_name)))
   
   # 1. Establish Region & Hotspots
   region <- make_region(lower_x, upper_x, lower_y, upper_y, units = "m")
@@ -67,6 +73,7 @@ evaluate_convergence <- function(transect_type, hotspot_name) {
     dist_data = sim_survey$dist_data,
     transects = sim_survey$transects,
     region = region,
+    spacing = spacing,
     transect_type = transect_type,
     truncation = trunc_dist
   )
@@ -101,15 +108,24 @@ evaluate_convergence <- function(transect_type, hotspot_name) {
 
 # Execution and Visualization -----
 
-# Use purrr::pmap_dfr to loop over the scenarios dataframe and bind results
-convergence_results <- purrr::pmap_dfr(
+# Setup Parallel Backend
+total_cores <- parallel::detectCores()
+target_cores <- max(1, total_cores - 2) # All but 2, minimum of 1
+
+message(sprintf("Starting parallel processing on %d out of %d available cores...", target_cores, total_cores))
+future::plan(future::multisession, workers = target_cores)
+
+# Use furrr::future_pmap_dfr to loop over the scenarios dataframe in parallel
+convergence_results <- furrr::future_pmap_dfr(
   list(scenarios$transect_type, scenarios$hotspot_name),
-  evaluate_convergence
+  evaluate_convergence,
+  .options = furrr::furrr_options(seed = TRUE) # CRITICAL: Ensures valid RNG across cores
 )
 
 # Plot the convergence trajectories
+library(ggplot2)
 convergence_plot <- ggplot(convergence_results, aes(x = iterations, y = cumulative_se, color = hotspot_name)) +
-  geom_line(size = 1) +
+  geom_line(linewidth = 1) + # Changed size to linewidth to avoid ggplot2 deprecation warnings
   facet_wrap(~ transect_type, scales = "free_y", labeller = label_both) +
   labs(
     title = "Bootstrap Variance Convergence",
@@ -125,3 +141,6 @@ convergence_plot <- ggplot(convergence_results, aes(x = iterations, y = cumulati
   )
 
 print(convergence_plot)
+
+# Return backend to sequential processing when done
+future::plan(future::sequential)

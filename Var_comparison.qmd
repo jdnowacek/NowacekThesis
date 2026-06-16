@@ -17,13 +17,13 @@ Builds a test of our different variance options to see which compares best to tr
 
 - Bootstrap estimates of N_hat from
 
+
+
 1.  Create true density surface
 
--- alternate outer loop start --
+-- outer loop start --
 
 1.  Simulate true population from that surface
-
--- outer loop start --
 
 1.  Run a survey on that population (random start point)
 
@@ -56,6 +56,9 @@ library(dsm)
 library(sf)
 library(mgcv)
 library(knitr)
+
+library(future)
+library(furrr)
 ```
 
 # Import Functions
@@ -110,54 +113,51 @@ ggplot(density_sf) +
   labs(title = "Simulated Density Surface")
 ```
 
-## True population
+## Computing Speed
 
 ```{r}
-sim_pop<- generate_simulated_pop(region)
+# Detect cores and reserve 2 for system processes
+available_cores <- availableCores()
+workers_to_use <- max(1, available_cores - 2)
 
-# FIX: Map these to the exact names exported by the list in get_simulated_pop()
-density <- sim_pop$density
-population_description <- sim_pop$population_description
-population <- sim_pop$population
-detectability <- sim_pop$detectability
+# Set the plan to use parallel workers
+plan(multisession, workers = workers_to_use)
 ```
+
 
 ## Analysis Loop
 
 ```{r}
-outer_loop_reps <- 10
-bootstrap_reps <- 50
+outer_loop_reps <- 200
+bootstrap_reps <- 1000
 
-results <- data.frame(
-  rep          = integer(outer_loop_reps),
-  N_hat        = numeric(outer_loop_reps), # Usually good practice to keep the abundance estimate too
-  se_R2        = numeric(outer_loop_reps),
-  se_R3        = numeric(outer_loop_reps),
-  se_S1        = numeric(outer_loop_reps),
-  se_S2        = numeric(outer_loop_reps),
-  se_O1        = numeric(outer_loop_reps),
-  se_O2        = numeric(outer_loop_reps),
-  se_striplet  = numeric(outer_loop_reps),
-  se_bootstrap = numeric(outer_loop_reps)
-)
-
-for (i in 1:outer_loop_reps) {
+# Using future_map_dfr instead of a for-loop for speed
+results <- future_map_dfr(1:outer_loop_reps, function(i) {
   
-  cat(sprintf("Running iteration %d of %d...\n", i, outer_loop_reps))
+  message(sprintf("Worker started iteration %d of %d...", i, outer_loop_reps))
   
-  ## Survey
+  ## Generate population
+  
+  sim_pop <- generate_simulated_pop(region)
+  
+  density <- sim_pop$density
+  population_description <- sim_pop$population_description
+  population <- sim_pop$population
+  detectability <- sim_pop$detectability
+  
+  ## Conduct survey
   
   survey_data_lines <- generate_survey_data(
     region = region,
     realized_population = sim_pop$population,
     transect_type = points_or_lines
-    )
+  )
   
   design <- survey_data_lines$design
   transects <- survey_data_lines$transects
   samplers <- transects@samplers
   
-  ## Fit
+  ## Fit and find analytical variances
   
   fit_lines <- get_fit(
     dist_data = survey_data_lines$dist_data,
@@ -179,7 +179,7 @@ for (i in 1:outer_loop_reps) {
   O2_est <- fit_lines$analytical_variances$se_N_O2
   striplet_est <- fit_lines$analytical_variances$se_N_striplet
   
-  ## Bootstraps
+  ## Run bootstrap estimator
   
   bootstraps <- get_bootstrap(
     region = region,
@@ -191,18 +191,27 @@ for (i in 1:outer_loop_reps) {
   
   bootstrap_est <- sd(bootstraps$N_hat)
   
-  results$rep[i]          <- i
-  results$N_hat[i]        <- fit_lines$N_hat # Storing the point estimate from the model for reference
-  results$se_R2[i]        <- R2_est
-  results$se_R3[i]        <- R3_est
-  results$se_S1[i]        <- S1_est
-  results$se_S2[i]        <- S2_est
-  results$se_O1[i]        <- O1_est
-  results$se_O2[i]        <- O2_est
-  results$se_striplet[i]  <- striplet_est
-  results$se_bootstrap[i] <- bootstrap_est
-}
+  ds_base_est <- fit_lines$se_m1
+  
+  ##  Return a tibble/data.frame of this iteration's results
+  
+  tibble(
+    rep          = i,
+    N_hat        = fit_lines$N_hat,
+    se_ds_base   = ds_base_est,
+    se_R2        = R2_est,
+    se_R3        = R3_est,
+    se_S1        = S1_est,
+    se_S2        = S2_est,
+    se_O1        = O1_est,
+    se_O2        = O2_est,
+    se_striplet  = striplet_est,
+    se_bootstrap = bootstrap_est
+  )
+  
+}, .options = furrr_options(seed = TRUE)) 
 ```
+
 
 ```{r}
 results |>
