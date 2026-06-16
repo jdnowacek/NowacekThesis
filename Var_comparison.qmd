@@ -146,9 +146,6 @@ test_survey <- run.survey(test_sim)
 # Plot it to view a summary
 plot(test_survey, region)
 ```
-```
-
-
 
 ## Computing Speed
 
