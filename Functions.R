@@ -229,85 +229,127 @@ get_fit <- function(dist_data,
   # Store value of the scale parameter estimate from the ds() model
   sigma_hat <- as.numeric(exp(coef(m1$ddf)$scale["(Intercept)", "estimate"]))
   
+  
   ## data wrangling for dsm() ----- 
   
-  # re-organizes dist_data as obsdata for use in the density surface models
-  obsdata <- dist_data |>
-    filter(!is.na(distance)) |>
-    mutate(object = as.character(object),
-           Sample.Label = as.character(Sample.Label),
-           size = 1) |>
-    select(object, Sample.Label, size, distance)
-  
-  # pulls the samplers from the transects object for sf data
   samplers <- transects@samplers
   
-  # pulls the geometry of the transects for lines or points
-  # calculates effort using line length
   if (transect_type == "line") {
-    # Suppress the centroid warning for constant attributes
-    # sf::st_agr(samplers) <- "constant" 
-    sampler_centroids <- sf::st_centroid(samplers)
-    sampler_xy <- sf::st_coordinates(sampler_centroids)
-    effort <- as.numeric(sf::st_length(samplers))
+    # --- SEGMENTED LINE TRANSECT APPROACH (Buckland / Hedley) ---
+    # Discretize lines to roughly match your prediction grid spacing
+    segment_length <- y_space/3
+    
+    segdata_list <- list()
+    obsdata <- dist_data |> filter(!is.na(distance))
+    new_labels <- character(nrow(obsdata))
+    
+    # Loop through each transect to segment it
+    for (i in seq_len(nrow(samplers))) {
+      geom <- samplers$geometry[i]
+      tr_label <- as.character(samplers$transect[i])
+      
+      # Calculate total line length (dropping units for dsm)
+      L <- as.numeric(sf::st_length(geom))
+      
+      # Determine number of segments for this transect
+      num_segs <- max(1, round(L / segment_length))
+      eff <- L / num_segs
+      
+      # Find segment centroids using proportional spacing
+      # (e.g., for 2 segments, sample at 0.25 and 0.75 along the line)
+      fractions <- (seq_len(num_segs) - 0.5) / num_segs
+      cents <- sf::st_line_sample(geom, sample = fractions)
+      cents_xy <- sf::st_coordinates(cents)
+      
+      # Create segdata entries for these new segments
+      temp_seg <- data.frame(
+        Sample.Label = paste0(tr_label, "_", seq_len(num_segs)),
+        Effort = eff,
+        x = cents_xy[, "X"],
+        y = cents_xy[, "Y"],
+        orig_transect = tr_label,
+        stringsAsFactors = FALSE
+      )
+      segdata_list[[i]] <- temp_seg
+      
+      # Map observations on this transect to their closest segment centroid
+      obs_idx <- which(as.character(obsdata$Sample.Label) == tr_label)
+      
+      if (length(obs_idx) > 0) {
+        for (j in obs_idx) {
+          obs_x <- obsdata$x[j]
+          obs_y <- obsdata$y[j]
+          
+          # Euclidean distance from the animal to all segments on this line
+          dists <- sqrt((temp_seg$x - obs_x)^2 + (temp_seg$y - obs_y)^2)
+          best_seg <- which.min(dists)
+          
+          new_labels[j] <- temp_seg$Sample.Label[best_seg]
+        }
+      }
+    }
+    
+    # Combine segmented data and arrange for variance estimators
+    segdata <- bind_rows(segdata_list) |>
+      arrange(x, y) |> 
+      select(Sample.Label, Effort, x, y, orig_transect) # <--- ADD orig_transect here
+    
+    # Update obsdata with the new granular Segment Labels
+    obsdata$Sample.Label <- new_labels
+    obsdata <- obsdata |>
+      mutate(object = as.character(object), size = 1) |>
+      select(object, Sample.Label, size, distance)
+    
   } else {
+    # --- POINT TRANSECT APPROACH ---
+    # Points are already discrete, no geometry splitting needed
     sampler_xy <- sf::st_coordinates(samplers)
-    effort <- 1
+    
+    segdata <- samplers |>
+      sf::st_drop_geometry() |>
+      mutate(
+        Sample.Label = as.character(transect),
+        Effort = 1, # Effort is always 1 for point transects in dsm
+        x = sampler_xy[, "X"],
+        y = sampler_xy[, "Y"]
+      ) |>
+      arrange(x, y) |>
+      select(Sample.Label, Effort, x, y)
+    
+    obsdata <- dist_data |>
+      filter(!is.na(distance)) |>
+      mutate(
+        object = as.character(object),
+        Sample.Label = as.character(Sample.Label),
+        size = 1
+      ) |>
+      select(object, Sample.Label, size, distance)
   }
   
-  # produces segdata, which is geometry compatible for dsm models
-  # arranges lines so that they work for overlapping var. est. methods
-  segdata <- samplers |>
-    sf::st_drop_geometry() |>
-    mutate(
-      Sample.Label = as.character(transect),
-      Effort = effort,
-      x = sampler_xy[, "X"],
-      y = sampler_xy[, "Y"]
-    ) |>
-    select(Sample.Label, Effort, x, y) |> 
-    arrange(x) # CRITICAL: Orders segments spatially for overlapping variances
-  
-  # Check if there are valid counts for the DSM
+  # Check if there are valid counts to prevent dsm() crash
   if (nrow(obsdata) == 0) {
     return(list(
       detection_model = m1, dsm = NULL, N_hat = N_hat,
       se_m1 = se_ds, sigma_hat = sigma_hat,
-      obsdata = obsdata, segdata = segdata, density_surface = NULL,
-      density = NULL, population_description = NULL,
-      analytical_variances = NULL
+      obsdata = obsdata, segdata = segdata
     ))
   }
   
+  
   ## dsm() models ----- 
   
-  # fits the density surface models
-  # different for lines than for points bc we have already grouped the lines
-  # to the point that there is no information for the y part of the smooth
-  if (transect_type == "line") {
-    dsm1 <- dsm(
-      count ~ s(x), # 1D smooth for lines
-      ddf.obj = m1,
-      segment.data = segdata,
-      observation.data = obsdata,
-      family = quasipoisson(link = "log"),
-      method = "REML",
-      convert.units = 1
-    )
-  } else {
-    dsm1 <- dsm(
-      count ~ s(x, y),     # 2D smooth for points
-      ddf.obj = m1,
-      segment.data = segdata,
-      observation.data = obsdata,
-      family = quasipoisson(link = "log"),
-      method = "REML",
-      convert.units = 1
-    )
-  }
+  # Because the lines have now been spatially segmented, 
+  # BOTH points and lines can universally use the 2D s(x, y) spatial smooth!
+  dsm1 <- dsm(
+    count ~ s(x, y), 
+    ddf.obj = m1,
+    segment.data = segdata,
+    observation.data = obsdata,
+    family = quasipoisson(link = "log"),
+    method = "REML",
+    convert.units = 1
+  )
   
-  
-  # Old Version
   
   ## prediction from dsm() ----- 
   
@@ -329,6 +371,8 @@ get_fit <- function(dist_data,
     mutate(N_hat_pred = as.numeric(predictions),
            density = pmax(N_hat_pred / area, .Machine$double.eps))
   
+  
+  
   ## density, pop from surface -----
   
   est.density <- make.density(
@@ -344,6 +388,8 @@ get_fit <- function(dist_data,
     N = N_hat, 
     fixed.N = TRUE
   )
+  
+  
   
   ## dsm surface from preds ----- 
   
@@ -365,6 +411,9 @@ get_fit <- function(dist_data,
       select(strata, density, x, y, N_hat_pred, area, geometry)
   }
   
+  
+  
+  
   ## variance estimators ----
   
   # empty object for variance estimate storage
@@ -381,14 +430,29 @@ get_fit <- function(dist_data,
                 .groups = "drop")
     
     line_data <- segdata |> 
-      left_join(obs_counts, by = "Sample.Label") |> 
-      mutate(count = replace_na(count, 0))
+        left_join(obs_counts, by = "Sample.Label") |> 
+        mutate(count = replace_na(count, 0)) |> 
+        group_by(orig_transect) |> 
+        summarize(
+          count = sum(count),
+          Effort = sum(Effort),
+          x = mean(x), # Get the average X-coordinate of the whole line
+          .groups = "drop") |> 
+        arrange(x) # CRITICAL: Re-sorts the whole lines spatially left-to-right
+      
+      nspotted <- line_data$count
+      lvec <- line_data$Effort
+      L <- sum(lvec)
+      k <- length(lvec) # 'k' is back to being the true number of lines!
+      ntot <- sum(nspotted)
     
     nspotted <- line_data$count
     lvec <- line_data$Effort
     L <- sum(lvec)
     k <- length(lvec)
     ntot <- sum(nspotted)
+    
+    
     
     ### Empirical Estimators (R2, R3, S1, S2, O1, O2) -----
     
@@ -427,6 +491,8 @@ get_fit <- function(dist_data,
     
     var.O1 <- k / (2 * L^2 * (k - 1)) * sum((nvec.1 - nvec.2 - ntot/L * (lvec.1 - lvec.2))^2)
     var.O2 <- (2 * k) / (L^2 * (k - 1)) * sum(((lvec.1 * lvec.2)/(lvec.1 + lvec.2))^2 * (ervec.1 - ervec.2)^2)
+    
+    
     
     
     ## Striplet Variance -----

@@ -45,7 +45,7 @@ bootstrap_reps <- 20
 ## Region
 
 ```{r}
-region <- make_region(0, 10000, 0, 10000, "m")
+region <- make_region(region_sf = NULL, 0, 10000, 0, 10000, "m")
 ```
 
 ## Density
