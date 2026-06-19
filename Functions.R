@@ -235,12 +235,15 @@ get_fit <- function(dist_data,
   samplers <- transects@samplers
   
   if (transect_type == "line") {
-    # --- SEGMENTED LINE TRANSECT APPROACH (Buckland / Hedley) ---
-    # Discretize lines to roughly match your prediction grid spacing
-    segment_length <- y_space/3
+    # split transects into segments (using grid spacing as a starting value)
+    # segment_length <- y_space/3
+    segment_length <- trunc_dist # maybe twice the truncation distance?
     
     segdata_list <- list()
-    obsdata <- dist_data |> filter(!is.na(distance))
+    
+    obsdata <- dist_data |> 
+      filter(!is.na(distance))
+    
     new_labels <- character(nrow(obsdata))
     
     # Loop through each transect to segment it
@@ -546,23 +549,30 @@ get_fit <- function(dist_data,
     
     ## The Delta Method: Combining var(ER) with var(Detection)
     
-    # Safely extract the detection probability variance from the 'ds' model
-    cv_N_m1_sq <- (se_ds / N_hat)^2
-    cv_ER_m1_sq <- (as.numeric(m1$dht$individuals$summary$cv.ER[1]))^2
-    cv_Pa_sq <- max(0, cv_N_m1_sq - cv_ER_m1_sq) # Isolate detection variance
+    # extract the squared CV of the detection probability directly from distance model
+    cv_Pa_sq <- (as.numeric(m1$dht$individuals$summary$cv.p[1]))^2
     
     # Calculate global Density
     Region_Area <- sum(pred_grid$area, na.rm = TRUE)
     D_hat <- N_hat / Region_Area
-    erhat <- ntot / L
+    
+    # 2. Define Encounter Rates (Observed vs. Model)
+    # Traditional estimators use the raw observed encounter rate:
+    erhat_obs <- ntot / L
+    
+    # The Striplet estimator should theoretically use the mean corresponding
+    # directly to the striplet model rather than the raw counts:
+    erhat_striplet <- mean(Abvec / Lbvec, na.rm = TRUE)
     
     # Delta Method Combiner Function
-    apply_delta <- function(var_ER) {
+    # NOTE: Group-size variance is intentionally omitted from this equation 
+    # because the simulation forces `size = 1` (individuals) in the obsdata.
+    apply_delta <- function(var_ER, erhat) {
       cv_ER_sq <- var_ER / (erhat^2)
       var_N <- (N_hat^2) * (cv_ER_sq + cv_Pa_sq)
       var_D <- (D_hat^2) * (cv_ER_sq + cv_Pa_sq)
       
-      # FIX: Convert Variances back to Standard Errors for comparison
+      # Convert Variances back to Standard Errors for comparison
       list(
         var_N = var_N, 
         var_D = var_D,
@@ -571,14 +581,16 @@ get_fit <- function(dist_data,
       )
     }
     
-    # Apply to all estimators
-    delta_R2 <- apply_delta(var.R2)
-    delta_R3 <- apply_delta(var.R3)
-    delta_S1 <- apply_delta(var.S1)
-    delta_S2 <- apply_delta(var.S2)
-    delta_O1 <- apply_delta(var.O1)
-    delta_O2 <- apply_delta(var.O2)
-    delta_striplet <- apply_delta(var_ER_striplet)
+    # Apply to all empirical estimators using the observed encounter rate
+    delta_R2 <- apply_delta(var.R2, erhat_obs)
+    delta_R3 <- apply_delta(var.R3, erhat_obs)
+    delta_S1 <- apply_delta(var.S1, erhat_obs)
+    delta_S2 <- apply_delta(var.S2, erhat_obs)
+    delta_O1 <- apply_delta(var.O1, erhat_obs)
+    delta_O2 <- apply_delta(var.O2, erhat_obs)
+    
+    # Apply to the striplet estimator using the strictly aligned striplet mean
+    delta_striplet <- apply_delta(var_ER_striplet, erhat_striplet)
     
     # Bundle all variances into a comprehensive flat list
     analytical_variances <- list(
@@ -609,7 +621,6 @@ get_fit <- function(dist_data,
       se_D_O2 = delta_O2$se_D,
       se_D_striplet = delta_striplet$se_D
     )
-  }
   
   # Return final integrated list
   list(
