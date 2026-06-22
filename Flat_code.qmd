@@ -1,0 +1,583 @@
+---
+title: "Flat_code"
+format: html
+---
+
+## Packages
+
+```{r}
+library(tidyverse)
+library(dsims)
+library(Distance)
+library(dssd)
+library(dsm)
+library(sf)
+library(mgcv)
+library(knitr)
+```
+
+## Constants
+
+```{r}
+# Simulation constants
+lower_x_bound <- 0
+upper_x_bound <- 10000
+lower_y_bound <- 0
+upper_y_bound <- 10000
+units <- "m"
+
+true_N <- 1000
+density_grid_spacing <- 500
+scale_parameter <- 250
+trunc_dist <- 500
+design_angle <- 0
+design_spacing <- 1000
+points_or_lines <- "line" # Switch to "point" if testing point transects
+bootstrap_reps <- 5
+
+# Set up hotspots
+my_hotspots <- list(
+  list(centre = c(2000, 8000), sigma = 800, amplitude = 1.2),
+  list(centre = c(5000, 2000), sigma = 6000, amplitude = 0.5),
+  list(centre = c(8000, 9000), sigma = 1000, amplitude = 2)
+)
+```
+
+## Region
+
+```{r}
+# Create basic sf boundary box
+region_sf <- sf::st_bbox(c(xmin = lower_x_bound, xmax = upper_x_bound, 
+                           ymin = lower_y_bound, ymax = upper_y_bound)) |> 
+  sf::st_as_sfc() |> 
+  sf::st_as_sf()
+
+# Convert to dssd region object
+region <- make.region(region.name = "region",
+                      shape = region_sf,
+                      units = units)
+```
+
+## True Density
+
+```{r}
+# Create basic uniform density
+density_true <- dsims::make.density(region = region,
+                                    x.space = density_grid_spacing,
+                                    constant = 1)
+
+# Iteratively add hotspots
+for (hotspot in my_hotspots) {
+  density_true <- dsims::add.hotspot(object = density_true,
+                                     centre = hotspot$centre,
+                                     sigma = hotspot$sigma,
+                                     amplitude = hotspot$amplitude)
+}
+
+# Format the true density surface
+density_surface_true <- density_true@density.surface[[1]] |>
+  mutate(
+    area = as.numeric(sf::st_area(geometry)),
+    density = density * true_N / sum(density * area)
+  ) |>
+  select(strata, density, x, y, geometry)
+
+density_true <- make.density(
+  region = region,
+  x.space = density_grid_spacing,
+  density.surface = density_surface_true
+)
+```
+
+### Plot density
+
+```{r}
+# Visualizing the underlying generated density map 
+ggplot(density_surface_true) +
+  geom_sf(aes(fill = density), color = NA) +
+  scale_fill_viridis_c() +
+  theme_minimal() +
+  labs(title = "True Spatial Density Surface",
+       fill = "Density (Animals/Cell)")
+```
+
+
+## True Population
+
+```{r}
+# Build population description
+pop.desc_true <- make.population.description(
+  region = region,
+  density = density_true,
+  N = true_N,
+  fixed.N = TRUE
+)
+
+# Build detection characteristics
+detect_true <- make.detectability(
+  key.function = "hn",
+  scale.param = scale_parameter,
+  truncation = trunc_dist
+)
+
+# Generate final actualized population coordinates
+pop_true <- generate.population(
+  object = pop.desc_true,
+  detectability = detect_true,
+  region = region
+)
+```
+
+## Realized Survey Data 
+
+```{r}
+# Build design layout
+design <- make.design(
+  region        = region,
+  transect.type = points_or_lines, 
+  design        = "systematic",
+  spacing       = design_spacing,
+  edge.protocol = "minus",
+  design.angle  = design_angle,
+  truncation    = trunc_dist
+)
+
+# Map the theoretical lines/points over the region
+transects <- generate.transects(design)
+
+# Create formal survey object based on transect type
+if (points_or_lines == "point") {
+  survey <- new(
+    Class = "Survey.PT", 
+    population = pop_true,
+    transect = transects,
+    rad.truncation = trunc_dist 
+  )
+} else {
+  survey <- new(
+    Class = "Survey.LT", 
+    population = pop_true,
+    transect = transects,
+    perp.truncation = trunc_dist
+  )
+}
+
+# Execute the survey to get sightings
+observed_survey <- run.survey(survey, region = region)
+
+dist_data <- observed_survey@dist.data
+```
+
+## ds() model
+
+```{r}
+# Fit basic detection function model
+m1 <- ds(
+  data = dist_data,
+  transect = points_or_lines,
+  key = "hn",
+  adjustment = NULL,
+  truncation = trunc_dist,
+  quiet = TRUE
+)
+
+# Extract N_hat, SE, and the scale parameter
+N_hat <- as.numeric(m1$dht$individuals$N$Estimate)
+N_hat <- if (length(N_hat) > 0) as.integer(round(N_hat)) else NA
+
+se_ds <- as.numeric(m1$dht$individuals$N$se)
+se_ds <- if (length(se_ds) > 0) se_ds else NA
+
+sigma_hat <- as.numeric(exp(coef(m1$ddf)$scale["(Intercept)", "estimate"]))
+```
+
+## data wrangling for dsm()
+
+```{r}
+samplers <- transects@samplers
+
+if (points_or_lines == "line") {
+  segment_length <- trunc_dist 
+  
+  segdata_list <- list()
+  obsdata <- dist_data |> filter(!is.na(distance))
+  new_labels <- character(nrow(obsdata))
+  
+  for (i in seq_len(nrow(samplers))) {
+    geom <- samplers$geometry[i]
+    tr_label <- as.character(samplers$transect[i])
+    
+    L <- as.numeric(sf::st_length(geom))
+    num_segs <- max(1, round(L / segment_length))
+    eff <- L / num_segs
+    
+    fractions <- (seq_len(num_segs) - 0.5) / num_segs
+    cents <- sf::st_line_sample(geom, sample = fractions)
+    cents_xy <- sf::st_coordinates(cents)
+    
+    temp_seg <- data.frame(
+      Sample.Label = paste0(tr_label, "_", seq_len(num_segs)),
+      Effort = eff,
+      x = cents_xy[, "X"],
+      y = cents_xy[, "Y"],
+      orig_transect = tr_label,
+      stringsAsFactors = FALSE
+    )
+    segdata_list[[i]] <- temp_seg
+    
+    obs_idx <- which(as.character(obsdata$Sample.Label) == tr_label)
+    if (length(obs_idx) > 0) {
+      for (j in obs_idx) {
+        obs_x <- obsdata$x[j]
+        obs_y <- obsdata$y[j]
+        dists <- sqrt((temp_seg$x - obs_x)^2 + (temp_seg$y - obs_y)^2)
+        best_seg <- which.min(dists)
+        new_labels[j] <- temp_seg$Sample.Label[best_seg]
+      }
+    }
+  }
+  
+  segdata <- bind_rows(segdata_list) |>
+    arrange(x, y) |> 
+    select(Sample.Label, Effort, x, y, orig_transect) 
+  
+  obsdata$Sample.Label <- new_labels
+  obsdata <- obsdata |>
+    mutate(object = as.character(object), size = 1) |>
+    select(object, Sample.Label, size, distance)
+    
+} else {
+  # POINT TRANSECT APPROACH
+  sampler_xy <- sf::st_coordinates(samplers)
+  
+  segdata <- samplers |>
+    sf::st_drop_geometry() |>
+    mutate(
+      Sample.Label = as.character(transect),
+      Effort = 1, 
+      x = sampler_xy[, "X"],
+      y = sampler_xy[, "Y"]
+    ) |>
+    arrange(x, y) |>
+    select(Sample.Label, Effort, x, y)
+  
+  obsdata <- dist_data |>
+    filter(!is.na(distance)) |>
+    mutate(
+      object = as.character(object),
+      Sample.Label = as.character(Sample.Label),
+      size = 1
+    ) |>
+    select(object, Sample.Label, size, distance)
+}
+```
+
+## Fit dsm() and Predict
+
+```{r}
+# Only attempt to fit the DSM if sightings exist
+if (nrow(obsdata) > 0) {
+  
+  dsm1 <- dsm(
+    count ~ s(x, y), 
+    ddf.obj = m1,
+    segment.data = segdata,
+    observation.data = obsdata,
+    family = quasipoisson(link = "log"),
+    method = "REML",
+    convert.units = 1
+  )
+  
+  prediction_grid <- make.density(
+    region = region,
+    x.space = density_grid_spacing,
+    y.space = density_grid_spacing,
+    constant = 1
+  )
+  
+  pred_grid <- prediction_grid@density.surface[[1]] |>
+    mutate(area = as.numeric(sf::st_area(geometry)))
+  
+  pred_data <- sf::st_drop_geometry(pred_grid)
+  
+  predictions <- predict(dsm1, newdata = pred_data, off.set = pred_grid$area, type = "response")
+  
+  pred_grid <- pred_grid |> 
+    mutate(N_hat_pred = as.numeric(predictions),
+           density = pmax(N_hat_pred / area, .Machine$double.eps))
+  
+  # Surface mapping
+  est.density <- make.density(
+    region = region, 
+    x.space = density_grid_spacing, 
+    y.space = density_grid_spacing, 
+    density.surface = pred_grid
+  )
+  
+  pop.desc <- make.population.description(
+    region = region, 
+    density = est.density, 
+    N = N_hat, 
+    fixed.N = TRUE
+  )
+  
+  # Collapse surface back into 1D if handling lines
+  if (points_or_lines == "line") {
+    dsm_surface <- pred_grid |> 
+      group_by(strata, x) |> 
+      summarize(
+        N_hat_pred = sum(N_hat_pred, na.rm = TRUE),
+        area = sum(area, na.rm = TRUE),
+        geometry = sf::st_union(geometry),
+        .groups = "drop"
+      ) |> 
+      mutate(density = pmax(N_hat_pred / area, .Machine$double.eps), y = 0) |> 
+      select(strata, density, x, y, N_hat_pred, area, geometry)
+  } else {
+    dsm_surface <- pred_grid |> 
+      select(strata, density, x, y, N_hat_pred, area, geometry)
+  }
+}
+```
+
+### Predicted density plot
+
+```{r}
+# Visualize the fitted Density Surface Model predictions
+if (exists("pred_grid")) {
+  ggplot(pred_grid) +
+    geom_sf(aes(fill = density), color = NA) +
+    scale_fill_viridis_c(option = "viridis") +
+    theme_minimal() +
+    labs(title = "DSM Predicted Density Surface",
+         subtitle = paste0("Total Estimated N_hat: ", round(sum(pred_grid$N_hat_pred))),
+         fill = "Density")
+} else {
+  print("No observations to model a surface.")
+}
+```
+
+
+## Analytical Variances (lines only)
+
+```{r}
+analytical_variances <- NULL
+
+if (points_or_lines == "line" && nrow(obsdata) > 0) {
+  
+  obs_counts <- obsdata |> 
+    group_by(Sample.Label) |> 
+    summarize(count = sum(size), .groups = "drop")
+  
+  line_data <- segdata |> 
+      left_join(obs_counts, by = "Sample.Label") |> 
+      mutate(count = replace_na(count, 0)) |> 
+      group_by(orig_transect) |> 
+      summarize(
+        count = sum(count),
+        Effort = sum(Effort),
+        x = mean(x), 
+        .groups = "drop") |> 
+      arrange(x) 
+    
+  nspotted <- line_data$count
+  lvec <- line_data$Effort
+  L <- sum(lvec)
+  k <- length(lvec)
+  ntot <- sum(nspotted)
+  
+  ## R2, R3
+  var.R2 <- (k * sum(lvec^2 * (nspotted/lvec - ntot/L)^2)) / (L^2 * (k - 1))
+  var.R3 <- 1 / (L * (k - 1)) * sum(lvec * (nspotted/lvec - ntot/L)^2)
+  
+  ## Stratified (S1, S2)
+  H_strat <- floor(k/2)
+  k.h <- rep(2, H_strat)
+  if(k %% 2 > 0) k.h[H_strat] <- 3
+  end.strat <- cumsum(k.h)
+  begin.strat <- cumsum(k.h) - k.h + 1
+  
+  sum.S1 <- 0; sum.S2 <- 0
+  for(h in 1:H_strat) {
+    n.strat <- nspotted[begin.strat[h]:end.strat[h]]
+    l.strat <- lvec[begin.strat[h]:end.strat[h]]
+    nbar.strat <- mean(n.strat)
+    lbar.strat <- mean(l.strat)
+    
+    inner.S1 <- sum((n.strat - nbar.strat - (ntot/L) * (l.strat - lbar.strat))^2)
+    sum.S1 <- sum.S1 + k.h[h] / (k.h[h] - 1) * inner.S1
+    
+    L.strat <- sum(l.strat)
+    var.strat.S2 <- k.h[h] / (L.strat^2 * (k.h[h] - 1)) * sum(l.strat^2 * (n.strat/l.strat - nbar.strat/lbar.strat)^2)
+    sum.S2 <- sum.S2 + L.strat^2 * var.strat.S2
+  }
+  var.S1 <- sum.S1 / L^2
+  var.S2 <- sum.S2 / L^2
+  
+  ## Overlapping (O1, O2)
+  lvec.1 <- lvec[-k]; lvec.2 <- lvec[-1]
+  nvec.1 <- nspotted[-k]; nvec.2 <- nspotted[-1]
+  ervec.1 <- nvec.1/lvec.1; ervec.2 <- nvec.2/lvec.2
+  
+  var.O1 <- k / (2 * L^2 * (k - 1)) * sum((nvec.1 - nvec.2 - ntot/L * (lvec.1 - lvec.2))^2)
+  var.O2 <- (2 * k) / (L^2 * (k - 1)) * sum(((lvec.1 * lvec.2)/(lvec.1 + lvec.2))^2 * (ervec.1 - ervec.2)^2)
+  
+  ## Striplet Variance
+  muvec <- dsm_surface$N_hat_pred 
+  midvec <- dsm_surface$x
+  musum <- sum(muvec, na.rm = TRUE)
+  
+  bbox <- sf::st_bbox(region@region)
+  y_length <- as.numeric(bbox["ymax"] - bbox["ymin"])
+  x_min <- as.numeric(bbox["xmin"])
+  x_max <- as.numeric(bbox["xmax"])
+  
+  B <- 50 
+  bvec <- seq(0, design_spacing, length.out = B)
+  Lbvec <- rep(0, B)
+  Abvec <- rep(0, B)
+  
+  for (b_idx in 1:B) {
+    b_val <- bvec[b_idx]
+    lines_grid <- seq(x_min + b_val, x_max, by = design_spacing)
+    
+    line_strings <- lapply(lines_grid, function(x) {
+      sf::st_linestring(matrix(c(x, bbox["ymin"], x, bbox["ymax"]), ncol = 2, byrow = TRUE))
+    })
+    lines_sf <- sf::st_sfc(line_strings, crs = sf::st_crs(region@region))
+    
+    clipped_lines <- suppressWarnings(sf::st_intersection(lines_sf, region@region))
+    Lbvec[b_idx] <- as.numeric(sum(sf::st_length(clipped_lines)))
+    
+    min_dist <- sapply(midvec, function(m) min(abs(m - lines_grid)))
+    g_b <- exp(- (min_dist^2) / (2 * sigma_hat^2))
+    g_b[min_dist > trunc_dist] <- 0 
+    
+    Abvec[b_idx] <- sum(muvec * g_b, na.rm = TRUE)
+  }
+  
+  var_ER_striplet <- mean((Abvec + (Abvec^2) * (1 - 1/musum)) / (Lbvec^2)) - (mean(Abvec / Lbvec))^2
+  
+  ## The Delta Method: Combining var(ER) with var(Detection)
+  cv_Pa_sq <- (as.numeric(m1$dht$individuals$summary$cv.p[1]))^2
+  Region_Area <- sum(pred_grid$area, na.rm = TRUE)
+  D_hat <- N_hat / Region_Area
+  
+  erhat_obs <- ntot / L
+  erhat_striplet <- mean(Abvec / Lbvec, na.rm = TRUE)
+  
+  apply_delta <- function(var_ER, erhat) {
+    cv_ER_sq <- var_ER / (erhat^2)
+    var_N <- (N_hat^2) * (cv_ER_sq + cv_Pa_sq)
+    list(var_N = var_N, se_N = sqrt(var_N))
+  }
+  
+  analytical_variances <- list(
+    var_ER_R2 = var.R2,
+    var_ER_striplet = var_ER_striplet,
+    se_N_R2 = apply_delta(var.R2, erhat_obs)$se_N,
+    se_N_O2 = apply_delta(var.O2, erhat_obs)$se_N,
+    se_N_striplet = apply_delta(var_ER_striplet, erhat_striplet)$se_N
+  )
+}
+```
+
+### variance table
+
+```{r}
+# # Display a formatted table of the calculated Analytical Variances
+# if (!is.null(analytical_variances)) {
+#   variance_summary <- data.frame(
+#     Estimator = c("Systematic (R2)", "Overlapping (O2)", "Analytical Striplet"),
+#     `Encounter Rate Variance` = c(analytical_variances$var_ER_R2, NA, analytical_variances$var_ER_striplet),
+#     `Final SE(N_hat)` = c(analytical_variances$se_N_R2, analytical_variances$se_N_O2, analytical_variances$se_N_striplet)
+#   )
+#   
+#   kable(variance_summary, digits = 3, caption = "Comparison of Analytical Variance Estimators (Line Transects)")
+# } else {
+#   print("Analytical variances not available. Point transects were likely selected or no detections occurred.")
+# }
+```
+
+
+## Bootstraps
+
+```{r}
+# Note: Relies on pop.desc object created during DSM fit chunk above
+detect_boot <- make.detectability(
+  key.function = "hn",
+  scale.param = sigma_hat,
+  truncation = trunc_dist
+)
+
+analyses_boot <- make.ds.analysis(
+  dfmodel = ~ 1,
+  key = "hn",
+  truncation = trunc_dist,
+  criteria = "AIC"
+)
+
+sim_obj <- make.simulation(
+  reps = bootstrap_reps,
+  design = design, 
+  population.description = pop.desc, 
+  detectability = detect_boot,
+  ds.analysis = analyses_boot
+)
+
+# Run the simulation 
+sim_obj <- run.simulation(sim_obj)
+
+# Extract N_hats
+N_hat_boot <- as.numeric(
+  sim_obj@results[["individuals"]][["N"]][1, "Estimate", seq_len(bootstrap_reps)]
+)
+
+bootstrap_results <- data.frame(
+  replicate = seq_len(bootstrap_reps),
+  N_hat = N_hat_boot
+)
+
+# Calculate empirical Standard Error
+empirical_SE <- sd(bootstrap_results$N_hat, na.rm = TRUE)
+```
+### Summary of bootstraps
+
+```{r}
+# Final visual and tabular breakdown of bootstrap loop results
+if (exists("bootstrap_results")) {
+  
+  # 1. Summary Table
+  boot_summary_table <- data.frame(
+    Metric = c("True Model N_hat", "Mean Bootstrap N_hat", "Empirical Standard Error (SE)"),
+    Value = c(N_hat, mean(bootstrap_results$N_hat, na.rm = TRUE), empirical_SE)
+  )
+  
+  print(kable(boot_summary_table, digits = 2, caption = "Bootstrap Empirical Results Overview"))
+  
+  # 2. Histogram of iteration outcomes
+  p_hist <- ggplot(bootstrap_results, aes(x = N_hat)) +
+    geom_histogram(fill = "steelblue", color = "black", bins = max(5, round(bootstrap_reps / 5))) +
+    geom_vline(aes(xintercept = mean(N_hat, na.rm = TRUE), color = "Mean Boot N_hat"), 
+               linetype = "dashed", size = 1.2) +
+    geom_vline(aes(xintercept = N_hat, color = "True Model N_hat"), 
+               linetype = "solid", size = 1) +
+    scale_color_manual(name = "Legend", values = c("Mean Boot N_hat" = "red", "True Model N_hat" = "darkgreen")) +
+    theme_minimal() +
+    labs(title = paste("Distribution of N_hat over", bootstrap_reps, "Bootstraps"),
+         x = "Estimated Abundance (N_hat)", y = "Frequency")
+  
+  print(p_hist)
+  
+} else {
+  print("Bootstrap sequence did not run (likely missing DSM pop.desc).")
+}
+```
+
+
+
+
+
+
+
+

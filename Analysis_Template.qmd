@@ -15,6 +15,7 @@ library(dssd)
 library(dsm)
 library(sf)
 library(mgcv)
+library(qrng) 
 ```
 
 # Import Functions
@@ -37,7 +38,7 @@ design_spacing <- 750
 density_grid_spacing <- 500
 
 design_angle <- 0
-bootstrap_reps <- 20
+bootstrap_reps <- 50
 ```
 
 # Code
@@ -107,18 +108,27 @@ density_surface <- fit_lines$density_surface
 ## Bootstraps
 
 ```{r}
-bootstraps <- get_bootstrap(
+# bootstraps <- get_bootstrap(
+#   region = region,
+#   population_description = fit_lines$population_description,
+#   sigma_hat = fit_lines$sigma_hat,
+#   transect_type = points_or_lines,
+#   reps = bootstrap_reps
+# )
+# 
+# est <- sd(bootstraps$N_hat)
+# est
+```
+
+```{r}
+get_bootstrap_qmc(
   region = region,
   population_description = fit_lines$population_description,
   sigma_hat = fit_lines$sigma_hat,
   transect_type = points_or_lines,
   reps = bootstrap_reps
 )
-
-est <- sd(bootstraps$N_hat)
-est
 ```
-
 
 
 

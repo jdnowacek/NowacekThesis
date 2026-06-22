@@ -7,6 +7,7 @@ library(dssd)
 library(dsm)
 library(sf)
 library(mgcv)
+library(qrng) 
 
 # Functions
 
@@ -630,6 +631,8 @@ get_fit <- function(dist_data,
     population_description = pop.desc, 
     analytical_variances = analytical_variances
   )
+  }
+  
 }
 
 
@@ -688,6 +691,158 @@ get_bootstrap <- function(region,
   data.frame(
     replicate = seq_len(reps),
     N_hat = N_hat
+  )
+}
+
+## Inverse CDF method ----
+
+## uses the population from get_fit, sigma hat from the ds() model,
+## and the survey design to generate an estimated N_hat 
+## Run this multiple times to estimate a SE by bootstraps
+
+get_bootstrap_qmc <- function(region,
+                              population_description,
+                              sigma_hat,
+                              transect_type = points_or_lines,
+                              reps = bootstrap_reps,
+                              angle = design_angle,
+                              spacing = design_spacing,
+                              truncation = trunc_dist) {
+  
+  # Pull the density surface from the population description
+  density_surface <- population_description@density@density.surface[[1]]
+  N_total <- as.integer(round(population_description@N))
+  
+  # Calculate expected N for each cell based on density * area
+  density_surface <- density_surface |>
+    mutate(N_expected = density * area)
+  
+  # Sum over Y to get the PDF, then integrate to get the CDF over X
+  marg_x <- density_surface |>
+    group_by(x) |>
+    summarize(N_x = sum(N_expected, na.rm = TRUE), .groups = "drop") |>
+    mutate(
+      prob_x = N_x / sum(N_x),
+      cdf_x = cumsum(prob_x)
+    )
+  
+  # Split and calculate Conditional CDFs for Y given X
+  cond_y_list <- density_surface |>
+    group_by(x) |>
+    mutate(
+      prob_y = N_expected / sum(N_expected, na.rm = TRUE),
+      cdf_y = cumsum(prob_y)
+    ) |>
+    split(~x)
+  
+  # Uniform samples from QMC (Sobol)
+  # Generate N_total Sobol points in 2 dimensions
+  U <- sobol(n = N_total, d = 2, randomize = "none")
+  
+  animal_x <- numeric(N_total)
+  animal_y <- numeric(N_total)
+  
+  # Perform Inverse CDF Sampling
+  for (i in 1:N_total) {
+    # Match U1 to the X CDF
+    x_idx <- which(marg_x$cdf_x >= U[i, 1])[1]
+    exact_x <- marg_x$x[x_idx]
+    animal_x[i] <- exact_x
+    
+    # Match U2 to the Y CDF specific to that X column
+    y_dist <- cond_y_list[[as.character(exact_x)]]
+    y_idx <- which(y_dist$cdf_y >= U[i, 2])[1]
+    animal_y[i] <- y_dist$y[y_idx]
+  }
+  
+  # Create a baseline uniform density to act as a placeholder for a valid S4 initialization
+  dummy_density <- dsims::make.density(region = region, x.space = spacing, constant = 1)
+  
+  # Use native dsims tool to build a perfectly configured population description
+  dummy_pop_desc <- dsims::make.population.description(
+    region = region,
+    density = dummy_density,
+    N = N_total,
+    fixed.N = TRUE
+  )
+  
+  detect <- make.detectability(
+    key.function = "hn",
+    scale.param = sigma_hat,
+    truncation = truncation
+  )
+  
+  # Generate a valid population structure natively
+  realized_population <- dsims::generate.population(
+    object = dummy_pop_desc,
+    detectability = detect,
+    region = region
+  )
+  
+  # Extract the natively generated data frame (contains scale.param, individual, etc.)
+  native_pop <- realized_population@population
+  
+  # Overwrite the uniform random X and Y coordinates with your perfect QMC points
+  native_pop$x <- animal_x
+  native_pop$y <- animal_y
+  
+  # Ensure it is a strict base data.frame to satisfy S4 validation
+  realized_population@population <- as.data.frame(native_pop)
+  
+  # Create the survey design (This dictates how the grid shifts randomly)
+  design <- make.design(
+    region        = region,
+    transect.type = transect_type, 
+    design        = "systematic",
+    spacing       = spacing,
+    edge.protocol = "minus",
+    design.angle  = angle,
+    truncation    = truncation
+  )
+  
+  # Empty vector to store variance results
+  N_hat_results <- rep(NA, reps)
+  
+  # Bootstrap loop: Evaluate spatial layout variance ONLY
+  for (b in 1:reps) {
+    
+    # Generate shifting transects for this iteration
+    transects <- generate.transects(design)
+    
+    # Construct the Survey S4 Object based on transect type
+    if (transect_type == "point") {
+      survey <- new("Survey.PT", population = realized_population, transect = transects, rad.truncation = truncation)
+    } else {
+      survey <- new("Survey.LT", population = realized_population, transect = transects, perp.truncation = truncation)
+    }
+    
+    # Run survey to compute Euclidean distances and Detection Probabilities
+    survey_run <- suppressWarnings(run.survey(survey, region = region))
+    obs_data <- survey_run@dist.data
+    
+    # Fit the ds() model safely
+    if (nrow(obs_data) > 0) {
+      tryCatch({
+        m1 <- ds(data = obs_data, 
+                 transect = transect_type, 
+                 key = "hn", 
+                 adjustment = NULL, 
+                 truncation = truncation, 
+                 quiet = TRUE)
+        
+        N_hat_results[b] <- as.numeric(m1$dht$individuals$N$Estimate)
+        
+      }, error = function(e) {
+        # If the model fails to fit (e.g., extremely low counts), gracefully pass NA
+        N_hat_results[b] <- NA
+      })
+    }
+  }
+  
+  # Return data frame identical to standard get_bootstrap output
+  data.frame(
+    replicate = seq_len(reps),
+    N_hat = N_hat_results
   )
 }
 
