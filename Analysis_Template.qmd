@@ -38,7 +38,7 @@ design_spacing <- 750
 density_grid_spacing <- 500
 
 design_angle <- 0
-bootstrap_reps <- 50
+bootstrap_reps <- 100
 ```
 
 # Code
@@ -108,29 +108,40 @@ density_surface <- fit_lines$density_surface
 ## Bootstraps
 
 ```{r}
-# bootstraps <- get_bootstrap(
-#   region = region,
-#   population_description = fit_lines$population_description,
-#   sigma_hat = fit_lines$sigma_hat,
-#   transect_type = points_or_lines,
-#   reps = bootstrap_reps
-# )
-# 
-# est <- sd(bootstraps$N_hat)
-# est
-```
-
-```{r}
-get_bootstrap_qmc(
+standard <- get_bootstrap(
   region = region,
   population_description = fit_lines$population_description,
   sigma_hat = fit_lines$sigma_hat,
   transect_type = points_or_lines,
   reps = bootstrap_reps
 )
+
+sd(standard$N_hat)
 ```
 
+```{r}
+invcdf <- get_bootstrap_invcdf(
+  region = region,
+  population_description = fit_lines$population_description,
+  sigma_hat = fit_lines$sigma_hat,
+  transect_type = points_or_lines,
+  reps = bootstrap_reps
+)
 
+sd(invcdf$N_hat)
+```
+
+```{r}
+disc_density <- get_bootstrap_disc_density(
+  region = region,
+  population_description = fit_lines$population_description,
+  sigma_hat = fit_lines$sigma_hat,
+  transect_type = points_or_lines,
+  reps = bootstrap_reps
+)
+
+sd(disc_density$N_hat)
+```
 
 
 

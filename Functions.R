@@ -694,13 +694,12 @@ get_bootstrap <- function(region,
   )
 }
 
-## Inverse CDF method ----
 
 ## uses the population from get_fit, sigma hat from the ds() model,
 ## and the survey design to generate an estimated N_hat 
 ## Run this multiple times to estimate a SE by bootstraps
 
-get_bootstrap_qmc <- function(region,
+get_bootstrap_invcdf <- function(region,
                               population_description,
                               sigma_hat,
                               transect_type = points_or_lines,
@@ -717,7 +716,7 @@ get_bootstrap_qmc <- function(region,
   density_surface <- density_surface |>
     mutate(N_expected = density * area)
   
-  # Sum over Y to get the PDF, then integrate to get the CDF over X
+  # Sum over Y to get the PDF, then "integrate" to get the CDF over X
   marg_x <- density_surface |>
     group_by(x) |>
     summarize(N_x = sum(N_expected, na.rm = TRUE), .groups = "drop") |>
@@ -811,9 +810,15 @@ get_bootstrap_qmc <- function(region,
     
     # Construct the Survey S4 Object based on transect type
     if (transect_type == "point") {
-      survey <- new("Survey.PT", population = realized_population, transect = transects, rad.truncation = truncation)
+      survey <- new("Survey.PT", 
+                    population = realized_population, 
+                    transect = transects, 
+                    rad.truncation = truncation)
     } else {
-      survey <- new("Survey.LT", population = realized_population, transect = transects, perp.truncation = truncation)
+      survey <- new("Survey.LT", 
+                    population = realized_population, 
+                    transect = transects, 
+                    perp.truncation = truncation)
     }
     
     # Run survey to compute Euclidean distances and Detection Probabilities
@@ -823,14 +828,157 @@ get_bootstrap_qmc <- function(region,
     # Fit the ds() model safely
     if (nrow(obs_data) > 0) {
       tryCatch({
-        m1 <- ds(data = obs_data, 
-                 transect = transect_type, 
-                 key = "hn", 
-                 adjustment = NULL, 
-                 truncation = truncation, 
-                 quiet = TRUE)
+        capture.output(
+          m2 <- ds(data = obs_data, 
+                   transect = transect_type, 
+                   key = "hn", 
+                   adjustment = NULL, 
+                   truncation = truncation, 
+                   quiet = TRUE)
+        )
         
-        N_hat_results[b] <- as.numeric(m1$dht$individuals$N$Estimate)
+        N_hat_results[b] <- as.numeric(m2$dht$individuals$N$Estimate)
+        
+      }, error = function(e) {
+        # If the model fails to fit (e.g., extremely low counts), gracefully pass NA
+        N_hat_results[b] <- NA
+      })
+    }
+  }
+  
+  # Return data frame identical to standard get_bootstrap output
+  data.frame(
+    replicate = seq_len(reps),
+    N_hat = N_hat_results
+  )
+}
+
+## uses the population from get_fit, sigma hat from the ds() model,
+## and the survey design to generate an estimated N_hat 
+## Run this multiple times to estimate a SE by bootstraps
+
+get_bootstrap_disc_density <- function(region,
+                                 population_description,
+                                 sigma_hat,
+                                 transect_type = points_or_lines,
+                                 reps = bootstrap_reps,
+                                 angle = design_angle,
+                                 spacing = design_spacing,
+                                 truncation = trunc_dist) {
+  
+  # Pull the density surface from the population description
+  density_surface <- population_description@density@density.surface[[1]]
+  N_total <- as.integer(round(population_description@N))
+  
+  # Calculate expected N for each cell based on density * area
+  density_surface <- density_surface |>
+    mutate(N_expected = density * area)
+  
+  # Calculate the probability of an animal falling into each specific cell
+  prob_vec <- density_surface$N_expected / sum(density_surface$N_expected, na.rm = TRUE)
+  
+  # Draw exactly N_total animals, distributed across the cells based on those probabilities
+  # rmultinom returns a matrix, so we use as.vector() to flatten it
+  cell_counts <- as.vector(rmultinom(n = 1, size = N_total, prob = prob_vec))
+  
+  # Calculate the width/height of each square cell (Area = L^2, so L = sqrt(Area))
+  cell_dimensions <- sqrt(density_surface$area)
+  
+  # Expand the centroids and dimensions so there is one value per simulated animal
+  # If a cell got 3 animals, its x, y, and size are repeated 3 times in these vectors
+  base_x <- rep(density_surface$x, cell_counts)
+  base_y <- rep(density_surface$y, cell_counts)
+  base_sizes <- rep(cell_dimensions, cell_counts)
+  
+  # Scatter the animals uniformly within the strict boundaries of their assigned boxlets
+  # We offset the centroids by a random number between -(width/2) and +(width/2)
+  animal_x <- base_x + runif(N_total, min = -base_sizes/2, max = base_sizes/2)
+  animal_y <- base_y + runif(N_total, min = -base_sizes/2, max = base_sizes/2)
+  
+  # Create a baseline uniform density to act as a placeholder for a valid S4 initialization
+  dummy_density <- dsims::make.density(region = region, x.space = spacing, constant = 1)
+  
+  # Use native dsims tool to build a perfectly configured population description
+  dummy_pop_desc <- dsims::make.population.description(
+    region = region,
+    density = dummy_density,
+    N = N_total,
+    fixed.N = TRUE
+  )
+  
+  detect <- make.detectability(
+    key.function = "hn",
+    scale.param = sigma_hat,
+    truncation = truncation
+  )
+  
+  # Generate a valid population structure natively
+  realized_population <- dsims::generate.population(
+    object = dummy_pop_desc,
+    detectability = detect,
+    region = region
+  )
+  
+  # Extract the natively generated data frame (contains scale.param, individual, etc.)
+  native_pop <- realized_population@population
+  
+  # Overwrite the uniform random X and Y coordinates with your perfect QMC points
+  native_pop$x <- animal_x
+  native_pop$y <- animal_y
+  
+  # Ensure it is a strict base data.frame to satisfy S4 validation
+  realized_population@population <- as.data.frame(native_pop)
+  
+  # Create the survey design (This dictates how the grid shifts randomly)
+  design <- make.design(
+    region        = region,
+    transect.type = transect_type, 
+    design        = "systematic",
+    spacing       = spacing,
+    edge.protocol = "minus",
+    design.angle  = angle,
+    truncation    = truncation
+  )
+  
+  # Empty vector to store variance results
+  N_hat_results <- rep(NA, reps)
+  
+  # Bootstrap loop: Evaluate spatial layout variance ONLY
+  for (b in 1:reps) {
+    
+    # Generate shifting transects for this iteration
+    transects <- generate.transects(design)
+    
+    # Construct the Survey S4 Object based on transect type
+    if (transect_type == "point") {
+      survey <- new("Survey.PT", 
+                    population = realized_population, 
+                    transect = transects, 
+                    rad.truncation = truncation)
+    } else {
+      survey <- new("Survey.LT", 
+                    population = realized_population, 
+                    transect = transects, 
+                    perp.truncation = truncation)
+    }
+    
+    # Run survey to compute Euclidean distances and Detection Probabilities
+    survey_run <- suppressWarnings(run.survey(survey, region = region))
+    obs_data <- survey_run@dist.data
+    
+    # Fit the ds() model safely
+    if (nrow(obs_data) > 0) {
+      tryCatch({
+        capture.output(
+          m2 <- ds(data = obs_data, 
+                   transect = transect_type, 
+                   key = "hn", 
+                   adjustment = NULL, 
+                   truncation = truncation, 
+                   quiet = TRUE)
+        )
+        
+        N_hat_results[b] <- as.numeric(m2$dht$individuals$N$Estimate)
         
       }, error = function(e) {
         # If the model fails to fit (e.g., extremely low counts), gracefully pass NA
