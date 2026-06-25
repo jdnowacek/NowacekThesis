@@ -1,3 +1,5 @@
+#Functions.R
+
 ## Load packages
 
 library(tidyverse)
@@ -622,6 +624,7 @@ get_fit <- function(dist_data,
       se_D_O2 = delta_O2$se_D,
       se_D_striplet = delta_striplet$se_D
     )
+  }
   
   # Return final integrated list
   list(
@@ -631,7 +634,6 @@ get_fit <- function(dist_data,
     population_description = pop.desc, 
     analytical_variances = analytical_variances
   )
-  }
   
 }
 

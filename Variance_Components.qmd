@@ -1,0 +1,320 @@
+---
+title: "Variance_Components"
+format: html
+---
+
+1.  sets up basic region, density, population, and survey data
+
+2.  runs get_fit
+
+    1.  stores the dispersion parameter
+
+3.  
+
+# Packages
+
+```{r}
+library(tidyverse)
+library(dsims)
+library(Distance)
+library(dssd)
+library(dsm)
+library(sf)
+library(mgcv)
+library(qrng) 
+```
+
+# Import Functions
+
+```{r}
+source(here::here("Functions.R"))
+```
+
+# Constants
+
+```{r}
+true_N <- 5000
+
+points_or_lines = "line"
+
+trunc_dist <- 750
+scale_parameter <- 200
+design_spacing <- 750
+density_grid_spacing <- 500
+
+design_angle <- 0
+bootstrap_reps <- 100
+```
+
+# Code
+
+## Region
+
+```{r}
+region <- make_region(region_sf = NULL, 0, 10000, 0, 10000, "m")
+```
+
+## Density
+
+```{r}
+my_hotspots <- list(
+  list(centre = c(2000, 8000), sigma = 800, amplitude = 1.2),
+  list(centre = c(5000, 2000), sigma = 6000, amplitude = 0.5),
+  list(centre = c(8000, 9000), sigma = 1000, amplitude = 2)
+)
+
+density_true <- make_hotspot_density(region, my_hotspots)
+```
+
+## True population
+
+```{r}
+sim_pop<- generate_simulated_pop(region)
+
+# FIX: Map these to the exact names exported by the list in get_simulated_pop()
+density <- sim_pop$density
+population_description <- sim_pop$population_description
+population <- sim_pop$population
+detectability <- sim_pop$detectability
+```
+
+## Survey
+
+generates the iteration of survey data analogous to real data collection
+
+```{r}
+survey_data_lines <- generate_survey_data(
+  region = region,
+  realized_population = sim_pop$population,
+  transect_type = points_or_lines
+)
+
+design <- survey_data_lines$design
+transects <- survey_data_lines$transects
+samplers <- transects@samplers
+```
+
+## Fit
+
+```{r}
+fit_lines <- get_fit(
+  dist_data = survey_data_lines$dist_data,
+  transects = survey_data_lines$transects,
+  region = region,
+  transect_type = points_or_lines
+)
+
+obs_data_base <- fit_lines$obsdata
+seg_data <- fit_lines$segdata
+dsm1 <- fit_lines$dsm
+density_surface <- fit_lines$density_surface
+
+# EXTRACT ESTIMATED PARAMETER: 
+# Grab the estimated scale parameter from the m1 model 
+# to hold detectability constant based on the base survey's fit.
+m1_sigma_hat <- fit_lines$sigma_hat
+```
+
+## Bootstrap Settings
+
+```{r}
+# Set these to TRUE to let them vary, or FALSE to hold them constant across all runs
+VARY_ANIMALS       <- F
+VARY_TRANSECTS     <- T
+VARY_DETECTABILITY <- T
+
+# VARY_ANIMALS       <- FALSE
+# VARY_TRANSECTS     <- FALSE
+# VARY_DETECTABILITY <- FALSE
+
+# Calculate probabilities and sizes for the animal placement generator
+density_surface <- density_surface |> 
+  mutate(N_expected = density * area)
+
+prob_vec <- density_surface$N_expected / sum(density_surface$N_expected, na.rm = TRUE)
+
+cell_dimensions <- sqrt(density_surface$area)
+
+# Dummy population framework to appease dsims S4 requirements
+dummy_density <- make.density(region = region, x.space = design_spacing, constant = 1)
+
+dummy_pop_desc <- make.population.description(
+  region = region, 
+  density = dummy_density, 
+  N = true_N, 
+  fixed.N = TRUE
+)
+
+# detect <- make.detectability(
+#   key.function = "hn", 
+#   scale.param = scale_parameter, 
+#   truncation = trunc_dist
+# )
+
+detect <- make.detectability(
+  key.function = "hn", 
+  scale.param = m1_sigma_hat, 
+  truncation = trunc_dist
+)
+
+Region_Area <- as.numeric(sf::st_area(region@region))
+```
+
+Set up values for the case where we do not vary each element.
+
+```{r}
+# Freeze Animals?
+if (!VARY_ANIMALS) {
+  cell_counts <- as.vector(rmultinom(n = 1, size = true_N, prob = prob_vec))
+  base_x <- rep(density_surface$x, cell_counts)
+  base_y <- rep(density_surface$y, cell_counts)
+  base_sizes <- rep(cell_dimensions, cell_counts)
+  
+  frozen_animal_x <- base_x + runif(true_N, min = -base_sizes/2, max = base_sizes/2)
+  frozen_animal_y <- base_y + runif(true_N, min = -base_sizes/2, max = base_sizes/2)
+}
+
+# Freeze Transects?
+if (!VARY_TRANSECTS) {
+  frozen_transects <- generate.transects(design)
+}
+
+# Freeze Detectability?
+if (!VARY_DETECTABILITY) {
+  # Assign a permanent uniform deviate (hideability score) to every single animal (1 to N)
+  set.seed(1209)
+  frozen_det_rands <- runif(true_N, min = 0, max = 1)
+}
+```
+
+```{r}
+N_hat_results <- rep(NA, bootstrap_reps)
+
+for (b in 1:bootstrap_reps) {
+  
+  # sim new animal positions
+  if (VARY_ANIMALS) {
+    cell_counts <- as.vector(rmultinom(n = 1, size = true_N, prob = prob_vec))
+    base_x <- rep(density_surface$x, cell_counts)
+    base_y <- rep(density_surface$y, cell_counts)
+    base_sizes <- rep(cell_dimensions, cell_counts)
+    
+    animal_x <- base_x + runif(true_N, min = -base_sizes/2, max = base_sizes/2)
+    animal_y <- base_y + runif(true_N, min = -base_sizes/2, max = base_sizes/2)
+  } else { # use original animal positions
+    animal_x <- frozen_animal_x
+    animal_y <- frozen_animal_y
+  }
+  
+  # rebuild population object with the correct animal positions
+  realized_population <- dsims::generate.population(
+    object = dummy_pop_desc, detectability = detect, region = region
+  )
+  native_pop <- realized_population@population
+  native_pop$x <- animal_x
+  native_pop$y <- animal_y
+  realized_population@population <- as.data.frame(native_pop)
+  
+  
+  # either re-place transects or use originals
+  if (VARY_TRANSECTS) {
+    current_transects <- generate.transects(design)
+  } else {
+    current_transects <- frozen_transects
+  }
+  
+  
+  # --- Step 3: Run the Survey ---
+  if (VARY_DETECTABILITY) {
+    # The 'Code as Written' option: dsims naturally varies binomial detection trials
+    survey <- new("Survey.LT", 
+                  population = realized_population, 
+                  transect = current_transects, 
+                  perp.truncation = trunc_dist)
+    
+    survey_run <- suppressWarnings(run.survey(survey, region = region))
+    obs_data <- survey_run@dist.data
+    
+  } else {
+    # The 'Frozen' option: Calculate geometry manually against the frozen uniform deviates
+    pop_sf <- sf::st_as_sf(native_pop, coords = c("x", "y"))
+    trans_sf <- current_transects@samplers
+    
+    # Fast distance matrix calculation
+    dist_matrix <- sf::st_distance(pop_sf, trans_sf)
+    units(dist_matrix) <- NULL # Drop sf units for fast matrix math
+    
+    # Find minimum distance to any transect for every animal
+    closest_trans <- max.col(-dist_matrix, ties.method = "first")
+    min_dists <- dist_matrix[cbind(1:nrow(dist_matrix), closest_trans)]
+    
+    # Filter only to animals within the truncation distance
+    covered_idx <- which(min_dists <= trunc_dist)
+    
+
+    
+    if (length(det_idx) > 0) {
+      # Construct the data frame EXACTLY as ds() expects it
+      obs_data <- data.frame(
+        object = det_idx,                      # Unique ID for the animal
+        Region.Label = region@region.name,     # Critical for extrapolation
+        Area = Region_Area,                    # Critical for extrapolation
+        Sample.Label = as.character(trans_sf$transect[closest_trans[det_idx]]),
+        Effort = as.numeric(sf::st_length(trans_sf$geometry[closest_trans[det_idx]])),
+        size = 1,
+        distance = min_dists[det_idx]          # Must be named exactly 'distance'
+      )
+    } else {
+      obs_data <- data.frame()
+    }
+  }
+  
+  
+  # --- Step 4: Estimation ---
+  # Because the stochasticity of detection is handled above, we just fit the model
+  if (nrow(obs_data) > 0) {
+    tryCatch({
+      capture.output(
+        m2 <- ds(data = obs_data, 
+                 transect = points_or_lines, 
+                 key = "hn", 
+                 adjustment = NULL, 
+                 truncation = trunc_dist, 
+                 quiet = TRUE)
+      )
+      N_hat_results[b] <- as.numeric(m2$dht$individuals$N$Estimate)
+    }, error = function(e) {
+      N_hat_results[b] <- NA
+    })
+    
+  } else {
+    N_hat_results[b] <- 0
+  }
+}
+```
+
+```{r}
+sim_results <- data.frame(
+  replicate = seq_len(bootstrap_reps),
+  N_hat = N_hat_results
+)
+
+sd(sim_results$N_hat, na.rm=TRUE)
+VARY_ANIMALS
+VARY_TRANSECTS
+VARY_DETECTABILITY
+```
+
+With **all three** varied, 100 reps, sd(N_hat) was **87.83**
+
+With only **detections** varied, 100 reps, sd(N_hat) was **28.00**
+
+With only **animal position** varied, 100 reps, sd(N_hat) was **27.68**
+
+With only **transect position** varied, 100 reps, sd(N_hat) was **25.03**
+
+With **animals and transects** varied, 100 reps, sd(N_hat) was **34.72**
+
+With **animals and detections** varied, 100 reps, sd(N_hat) was **67.01**
+
+With **detections and transects** varied, 100 reps, sd(N_hat) was **61.85**
