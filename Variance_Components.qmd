@@ -3,14 +3,6 @@ title: "Variance_Components"
 format: html
 ---
 
-1.  sets up basic region, density, population, and survey data
-
-2.  runs get_fit
-
-    1.  stores the dispersion parameter
-
-3.  
-
 # Packages
 
 ```{r}
@@ -43,7 +35,14 @@ design_spacing <- 750
 density_grid_spacing <- 500
 
 design_angle <- 0
-bootstrap_reps <- 100
+bootstrap_reps <- 1000
+
+set.seed(1209)
+
+# Set these to TRUE to let them vary, or FALSE to hold them constant across all runs
+VARY_ANIMALS       <- F
+VARY_TRANSECTS     <- T
+VARY_DETECTABILITY <- T
 ```
 
 # Code
@@ -118,15 +117,6 @@ m1_sigma_hat <- fit_lines$sigma_hat
 ## Bootstrap Settings
 
 ```{r}
-# Set these to TRUE to let them vary, or FALSE to hold them constant across all runs
-VARY_ANIMALS       <- F
-VARY_TRANSECTS     <- T
-VARY_DETECTABILITY <- T
-
-# VARY_ANIMALS       <- FALSE
-# VARY_TRANSECTS     <- FALSE
-# VARY_DETECTABILITY <- FALSE
-
 # Calculate probabilities and sizes for the animal placement generator
 density_surface <- density_surface |> 
   mutate(N_expected = density * area)
@@ -182,12 +172,11 @@ if (!VARY_TRANSECTS) {
 # Freeze Detectability?
 if (!VARY_DETECTABILITY) {
   # Assign a permanent uniform deviate (hideability score) to every single animal (1 to N)
-  set.seed(1209)
   frozen_det_rands <- runif(true_N, min = 0, max = 1)
 }
 ```
 
-```{r}
+```{r, message=F, echo=F}
 N_hat_results <- rep(NA, bootstrap_reps)
 
 for (b in 1:bootstrap_reps) {
@@ -210,10 +199,14 @@ for (b in 1:bootstrap_reps) {
   realized_population <- dsims::generate.population(
     object = dummy_pop_desc, detectability = detect, region = region
   )
-  native_pop <- realized_population@population
+  
+  native_pop <- realized_population@population |>
+  as.data.frame() |>
+  select(-any_of("geometry"))
+
   native_pop$x <- animal_x
   native_pop$y <- animal_y
-  realized_population@population <- as.data.frame(native_pop)
+  realized_population@population <- native_pop
   
   
   # either re-place transects or use originals
@@ -250,7 +243,15 @@ for (b in 1:bootstrap_reps) {
     
     # Filter only to animals within the truncation distance
     covered_idx <- which(min_dists <= trunc_dist)
+
+    # compute det_idx from frozen thresholds
+    det_probs <- exp(-min_dists[covered_idx]^2 / (2 * m1_sigma_hat^2))
+    detected  <- frozen_det_rands[covered_idx] <= det_probs
+    det_idx   <- covered_idx[detected]
     
+    # CORRECT - index closest_trans with covered_idx first, then the detected subset
+    detected_trans <- closest_trans[covered_idx][detected]
+
 
     
     if (length(det_idx) > 0) {
@@ -259,8 +260,8 @@ for (b in 1:bootstrap_reps) {
         object = det_idx,                      # Unique ID for the animal
         Region.Label = region@region.name,     # Critical for extrapolation
         Area = Region_Area,                    # Critical for extrapolation
-        Sample.Label = as.character(trans_sf$transect[closest_trans[det_idx]]),
-        Effort = as.numeric(sf::st_length(trans_sf$geometry[closest_trans[det_idx]])),
+        Sample.Label = as.character(trans_sf$transect[detected_trans]),
+        Effort = as.numeric(sf::st_length(trans_sf$geometry[detected_trans])),
         size = 1,
         distance = min_dists[det_idx]          # Must be named exactly 'distance'
       )
@@ -305,16 +306,16 @@ VARY_TRANSECTS
 VARY_DETECTABILITY
 ```
 
-With **all three** varied, 100 reps, sd(N_hat) was **87.83**
+With **all three** varied, 1000 reps, sd(N_hat) was **84.64**
 
-With only **detections** varied, 100 reps, sd(N_hat) was **28.00**
+With only **animal position** varied, 1000 reps, sd(N_hat) was **62.51**
 
-With only **animal position** varied, 100 reps, sd(N_hat) was **27.68**
+With only **transect position** varied, 1000 reps, sd(N_hat) was **57.88**
 
-With only **transect position** varied, 100 reps, sd(N_hat) was **25.03**
+With only **detections** varied, 1000 reps, sd(N_hat) was **33.27**
 
-With **animals and transects** varied, 100 reps, sd(N_hat) was **34.72**
+With **animals and transects** varied, 1000 reps, sd(N_hat) was **81.62**
 
-With **animals and detections** varied, 100 reps, sd(N_hat) was **67.01**
+With **animals and detections** varied, 100 reps, sd(N_hat) was **60.57**
 
-With **detections and transects** varied, 100 reps, sd(N_hat) was **61.85**
+With **detections and transects** varied, 100 reps, sd(N_hat) was **61.05**
