@@ -40,9 +40,10 @@ bootstrap_reps <- 1000
 set.seed(1209)
 
 # Set these to TRUE to let them vary, or FALSE to hold them constant across all runs
-VARY_ANIMALS       <- F
-VARY_TRANSECTS     <- T
-VARY_DETECTABILITY <- T
+# spell out each of false and true
+VARY_ANIMALS       <- FALSE
+VARY_TRANSECTS     <- TRUE
+VARY_DETECTABILITY <- TRUE
 ```
 
 # Code
@@ -316,6 +317,6 @@ With only **detections** varied, 1000 reps, sd(N_hat) was **33.27**
 
 With **animals and transects** varied, 1000 reps, sd(N_hat) was **81.62**
 
-With **animals and detections** varied, 100 reps, sd(N_hat) was **60.57**
+With **animals and detections** varied, 1000 reps, sd(N_hat) was **60.57**
 
-With **detections and transects** varied, 100 reps, sd(N_hat) was **61.05**
+With **detections and transects** varied, 1000 reps, sd(N_hat) was **61.05**
