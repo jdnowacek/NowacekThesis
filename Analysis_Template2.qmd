@@ -1,0 +1,198 @@
+---
+title: "Analysis Template 2"
+format: html
+---
+
+Document to test out the "Functions.R" file and see how the estimators perform.
+
+# Packages
+
+```{r}
+library(tidyverse)
+library(dsims)
+library(Distance)
+library(dssd)
+library(dsm)
+library(sf)
+library(mgcv)
+library(qrng) 
+```
+
+# Import Functions
+
+```{r}
+source(here::here("Functions2.R"))
+```
+
+# Constants
+
+```{r}
+true_N <- 5000
+
+points_or_lines = "point"
+
+trunc_dist <- 750
+scale_parameter <- 200
+design_spacing <- 750
+
+density_grid_spacing <- 500
+
+design_angle <- 0
+bootstrap_reps <- 10
+```
+
+# Code
+
+## Region
+
+```{r}
+region <- make_region(region_sf = NULL, 0, 10000, 0, 10000, "m")
+```
+
+## Density
+
+```{r}
+my_hotspots <- list(
+  list(centre = c(2000, 8000), sigma = 800, amplitude = 1.2),
+  list(centre = c(5000, 2000), sigma = 6000, amplitude = 0.5),
+  list(centre = c(8000, 9000), sigma = 1000, amplitude = 2)
+)
+
+density_true <- make_hotspot_density(region, my_hotspots)
+```
+
+## True population
+
+```{r}
+sim_pop<- generate_simulated_pop(region)
+
+# FIX: Map these to the exact names exported by the list in get_simulated_pop()
+density <- sim_pop$density
+population_description <- sim_pop$population_description
+population <- sim_pop$population
+detectability <- sim_pop$detectability
+```
+
+## Survey
+
+generates the iteration of survey data analogous to real data collection
+
+```{r}
+survey_data_lines <- generate_survey_data(
+  region = region,
+  realized_population = sim_pop$population,
+  transect_type = points_or_lines
+)
+
+design <- survey_data_lines$design
+transects <- survey_data_lines$transects
+samplers <- transects@samplers
+```
+
+## ds() Fit 
+
+```{r}
+ds_results <- fit_ds_model(
+  dist_data = survey_data_lines$dist_data,
+  transect_type = points_or_lines,
+  truncation = trunc_dist
+)
+```
+
+## dsm() models
+
+```{r}
+dsm_results <- fit_dsm_model(
+  dist_data = survey_data_lines$dist_data,
+  transects = survey_data_lines$transects,
+  region = region,
+  detection_model = ds_results$detection_model,
+  N_hat = ds_results$N_hat,
+  transect_type = points_or_lines,
+  truncation = trunc_dist,
+  x_space = density_grid_spacing,
+  y_space = density_grid_spacing
+)
+```
+
+## Variance estimators
+
+```{r}
+analytical_vars <- calculate_variance_estimators(
+  obsdata = dsm_results$obsdata,
+  segdata = dsm_results$segdata,
+  region = region,
+  detection_model = ds_results$detection_model,
+  dsm_model = dsm_results$dsm,
+  dsm_surface = dsm_results$density_surface,
+  pred_grid = dsm_results$pred_grid,
+  N_hat = ds_results$N_hat,
+  sigma_hat = ds_results$sigma_hat,
+  transect_type = points_or_lines,
+  spacing = design_spacing,
+  truncation = trunc_dist
+)
+
+# Re-mapping extracted variables for potential downstream code
+obs_data <- dsm_results$obsdata
+seg_data <- dsm_results$segdata
+dsm1 <- dsm_results$dsm
+density_surface <- dsm_results$density_surface
+
+# Check analytical variance outout
+# print(analytical_vars)
+```
+
+## Bootstraps
+
+```{r}
+standard <- get_bootstrap(
+  region = region,
+  population_description = dsm_results$population_description,
+  sigma_hat = ds_results$sigma_hat,
+  transect_type = points_or_lines,
+  reps = bootstrap_reps,
+  angle = design_angle,
+  spacing = design_spacing,
+  truncation = trunc_dist
+)
+
+sd(standard$N_hat, na.rm = TRUE)
+```
+
+```{r}
+# invcdf <- get_bootstrap_invcdf(
+#   region = region,
+#   population_description = dsm_results$population_description,
+#   sigma_hat = ds_results$sigma_hat,
+#   transect_type = points_or_lines,
+#   reps = bootstrap_reps,
+#   angle = design_angle,
+#   spacing = design_spacing,
+#   truncation = trunc_dist
+# )
+# 
+# # invcdf <- invcdf |>
+# #   arrange(N_hat) |>
+# #   slice(1:91)
+# 
+# sd(invcdf$N_hat, na.rm = TRUE)
+```
+
+```{r}
+disc_density <- get_bootstrap_disc_density(
+  region = region,
+  population_description = dsm_results$population_description,
+  sigma_hat = ds_results$sigma_hat,
+  transect_type = points_or_lines,
+  reps = bootstrap_reps,
+  angle = design_angle,
+  spacing = design_spacing,
+  truncation = trunc_dist
+)
+
+sd(disc_density$N_hat, na.rm = TRUE)
+```
+
+
+
