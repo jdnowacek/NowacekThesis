@@ -64,19 +64,19 @@ library(furrr)
 # Import Functions
 
 ```{r}
-source(here::here("Functions.R"))
+source(here::here("Functions2.R"))
 ```
 
 # Constants
 
 ```{r}
-true_N <- 5000
+true_N <- 1000
 
 points_or_lines = "line"
 
-trunc_dist <- 750
-scale_parameter <- 200
-design_spacing <- 750
+trunc_dist <- 300
+scale_parameter <- 100
+design_spacing <- 500
 
 density_grid_spacing <- 500
 
@@ -88,17 +88,22 @@ design_angle <- 0
 ## Region
 
 ```{r}
-region <- make_region(0, 10000, 0, 10000, "m")
+region <- make_region(region_sf = NULL, 0, 5000, 0, 5000, "m")
+
 plot(region)
 ```
 
 ## Density
 
 ```{r}
+# my_hotspots <- list(
+#   list(centre = c(2000, 8000), sigma = 800, amplitude = 1.2),
+#   list(centre = c(5000, 2000), sigma = 6000, amplitude = 0.5),
+#   list(centre = c(8000, 9000), sigma = 1000, amplitude = 2)
+# )
+
 my_hotspots <- list(
-  list(centre = c(2000, 8000), sigma = 800, amplitude = 1.2),
-  list(centre = c(5000, 2000), sigma = 6000, amplitude = 0.5),
-  list(centre = c(8000, 9000), sigma = 1000, amplitude = 2)
+  list(centre = c(2500, 2500), sigma = 8000, amplitude = 0.1)
 )
 
 density_true <- make_hotspot_density(region, my_hotspots)
@@ -162,16 +167,15 @@ plan(multisession, workers = workers_to_use)
 ## Analysis Loop
 
 ```{r}
-outer_loop_reps <- 100
-bootstrap_reps <- 250
+outer_loop_reps <- 10
+bootstrap_reps <- 20
 
 # Using future_map_dfr instead of a for-loop for speed
 results <- future_map_dfr(1:outer_loop_reps, function(i) {
   
-  message(sprintf("Worker started iteration %d of %d...", i, outer_loop_reps))
+  # message(sprintf("Worker started iteration %d of %d...", i, outer_loop_reps))
   
-  ## Generate population
-  
+  ## 1. Generate population
   sim_pop <- generate_simulated_pop(region)
   
   density <- sim_pop$density
@@ -179,8 +183,7 @@ results <- future_map_dfr(1:outer_loop_reps, function(i) {
   population <- sim_pop$population
   detectability <- sim_pop$detectability
   
-  ## Conduct survey
-  
+  ## 2. Conduct survey
   survey_data_lines <- generate_survey_data(
     region = region,
     realized_population = sim_pop$population,
@@ -191,59 +194,89 @@ results <- future_map_dfr(1:outer_loop_reps, function(i) {
   transects <- survey_data_lines$transects
   samplers <- transects@samplers
   
-  ## Fit and find analytical variances
+  ## 3. Fit distance sampling model
+  ds_results <- fit_ds_model(
+    dist_data = survey_data_lines$dist_data,
+    transect_type = points_or_lines,
+    truncation = trunc_dist
+  )
   
-  fit_lines <- get_fit(
+  ## 4. Fit density surface model
+  dsm_results <- fit_dsm_model(
     dist_data = survey_data_lines$dist_data,
     transects = survey_data_lines$transects,
     region = region,
-    transect_type = points_or_lines
+    detection_model = ds_results$detection_model,
+    N_hat = ds_results$N_hat,
+    transect_type = points_or_lines,
+    truncation = trunc_dist
   )
   
-  obs_data <- fit_lines$obsdata
-  seg_data <- fit_lines$segdata
-  dsm1 <- fit_lines$dsm
-  density_surface <- fit_lines$density_surface
+  ## 5. Calculate analytical variances
+  analytical_variances <- calculate_variance_estimators(
+    obsdata = dsm_results$obsdata,
+    segdata = dsm_results$segdata,
+    region = region,
+    detection_model = ds_results$detection_model,
+    dsm_model = dsm_results$dsm,
+    dsm_surface = dsm_results$density_surface,
+    pred_grid = dsm_results$pred_grid,
+    N_hat = ds_results$N_hat,
+    sigma_hat = ds_results$sigma_hat,
+    transect_type = points_or_lines,
+    truncation = trunc_dist
+  )
   
-  R2_est <- fit_lines$analytical_variances$se_N_R2
-  R3_est <- fit_lines$analytical_variances$se_N_R3
-  S1_est <- fit_lines$analytical_variances$se_N_S1
-  S2_est <- fit_lines$analytical_variances$se_N_S2
-  O1_est <- fit_lines$analytical_variances$se_N_O1
-  O2_est <- fit_lines$analytical_variances$se_N_O2
-  striplet_est <- fit_lines$analytical_variances$se_N_striplet
+  # Extract analytical standard errors
+  R2_est <- analytical_variances$se_N_R2
+  R3_est <- analytical_variances$se_N_R3
+  S1_est <- analytical_variances$se_N_S1
+  S2_est <- analytical_variances$se_N_S2
+  O1_est <- analytical_variances$se_N_O1
+  O2_est <- analytical_variances$se_N_O2
+  striplet_est <- analytical_variances$se_N_striplet
   
-  ## Run bootstrap estimator
-  
+  ## 6. Run standard bootstrap estimator
   bootstraps <- get_bootstrap(
     region = region,
-    population_description = fit_lines$population_description,
-    sigma_hat = fit_lines$sigma_hat,
+    population_description = dsm_results$population_description,
+    sigma_hat = ds_results$sigma_hat,
     transect_type = points_or_lines,
     reps = bootstrap_reps
   )
   
-  bootstrap_est <- sd(bootstraps$N_hat)
+  bootstrap_est <- sd(bootstraps$N_hat, na.rm = TRUE)
   
-  ds_base_est <- fit_lines$se_m1
-  
-  ##  Return a tibble/data.frame of this iteration's results
-  
-  tibble(
-    rep          = i,
-    N_hat        = fit_lines$N_hat,
-    se_ds_base   = ds_base_est,
-    se_R2        = R2_est,
-    se_R3        = R3_est,
-    se_S1        = S1_est,
-    se_S2        = S2_est,
-    se_O1        = O1_est,
-    se_O2        = O2_est,
-    se_striplet  = striplet_est,
-    se_bootstrap = bootstrap_est
+  ## 7. Run discrete density bootstrap estimator
+  bootstraps_disc <- get_bootstrap_disc_density(
+    region = region,
+    population_description = dsm_results$population_description,
+    sigma_hat = ds_results$sigma_hat,
+    transect_type = points_or_lines,
+    reps = bootstrap_reps
   )
   
-}, .options = furrr_options(seed = TRUE)) 
+  bootstrap_disc_est <- sd(bootstraps_disc$N_hat, na.rm = TRUE)
+  
+  ds_base_est <- ds_results$se_m1
+  
+  ## 8. Return a tibble/data.frame of this iteration's results
+  tibble(
+    rep                 = i,
+    N_hat               = ds_results$N_hat,
+    se_ds_base          = ds_base_est,
+    se_R2               = R2_est,
+    se_R3               = R3_est,
+    se_S1               = S1_est,
+    se_S2               = S2_est,
+    se_O1               = O1_est,
+    se_O2               = O2_est,
+    se_striplet         = striplet_est,
+    se_bootstrap        = bootstrap_est,
+    se_bootstrap_disc   = bootstrap_disc_est
+  )
+  
+}, .options = furrr_options(seed = TRUE))
 ```
 
 
@@ -257,8 +290,21 @@ results |>
             O1 = mean(se_O1),
             O2 = mean(se_O2),
             striplet = mean(se_striplet),
-            bootstrap = mean(se_bootstrap)) |>
+            bootstrap = mean(se_bootstrap),
+            bootstrap_disc = mean(se_bootstrap_disc)) |>
   kable(digits = 3)
 ```
+
+Inflated striplet estimator variance, seems to be a product of the shifting density grid overlapping with values from shifting transects (500 and 750 will line up at 1500, 3000, etc) Improves when using a non-round value for design spacing.
+
+
+
+
+
+
+
+
+
+
 
 

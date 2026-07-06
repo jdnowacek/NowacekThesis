@@ -166,6 +166,8 @@ if (points_or_lines == "point") {
 observed_survey <- run.survey(survey, region = region)
 
 dist_data <- observed_survey@dist.data
+
+plot(survey)
 ```
 
 ## ds() model

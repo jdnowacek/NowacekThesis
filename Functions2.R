@@ -1,4 +1,4 @@
-# Functions.R
+# Functions2.R
 
 ## Load packages
 
@@ -82,7 +82,8 @@ generate_simulated_pop <- function(region,
   density_surface_true <- density_true@density.surface[[1]] |>
     mutate(
       area = as.numeric(sf::st_area(geometry)),
-      density = density * N / sum(density * area)
+      density = density * N / sum(density * area) # might not need this anymore
+      # nevermind, it ensures that the number of animals matches true_N 
     ) |>
     select(strata, density, x, y, geometry)
   
