@@ -75,11 +75,11 @@ generate_simulated_pop <- function(region,
                                    truncation = trunc_dist) {
   
   # Extract the spacing directly from the provided density object
-  x_space <- density_obj@x.space
+  x_space <- density_true@x.space
   
   density_surface_true <- density_true@density.surface[[1]] |>
     mutate(
-      area = as.numeric(st_area(geometry)),
+      area = as.numeric(sf::st_area(geometry)),
       density = density * N / sum(density * area) # might not need this anymore
       # nevermind, it ensures that the number of animals matches true_N 
     ) |>
@@ -248,7 +248,7 @@ fit_dsm_model <- function(dist_data,
       tr_label <- as.character(samplers$transect[i])
       
       # Calculate total line length (dropping units for dsm)
-      L <- as.numeric(st_length(geom))
+      L <- as.numeric(sf::st_length(geom))
       
       # Determine number of segments for this transect
       num_segs <- max(1, round(L / segment_length))
@@ -304,7 +304,7 @@ fit_dsm_model <- function(dist_data,
     ## Point transects:
     
     # Points are already discrete, no geometry splitting needed
-    sampler_xy <- st_coordinates(samplers)
+    sampler_xy <- sf::st_coordinates(samplers)
     
     segdata <- samplers |>
       sf::st_drop_geometry() |>
@@ -404,7 +404,7 @@ fit_dsm_model <- function(dist_data,
       summarize(
         N_hat_pred = sum(N_hat_pred, na.rm = TRUE), # sum over transect segments
         area = sum(area, na.rm = TRUE),
-        geometry = st_union(geometry),
+        geometry = sf::st_union(geometry),
         .groups = "drop"
       ) |> 
       mutate(density = pmax(N_hat_pred / area, .Machine$double.eps), y = 0) |> 
@@ -648,7 +648,7 @@ calculate_variance_estimators <- function(obsdata,
     
     # Boxlet variance estimator
     
-    grid_res <- 50 # Target number of boxlets along the longest axis
+    grid_cells <- 50 # Target number of boxlets along the longest axis
     
     # tessellate the region to create boxlets
     region_sf <- region@region
