@@ -41,15 +41,15 @@ make_hotspot_density <- function(region,
                                  x_space = density_grid_spacing) {
   
   # Create basic uniform density
-  density_true <- dsims::make.density(region = region,
-                                      x.space = x_space,
-                                      constant = 1)
+  density_true <- make.density(region = region,
+                               x.space = x_space,
+                               constant = 1)
   
   for (hotspot in hotspots) {
-    density_true <- dsims::add.hotspot(object = density_true,
-                                       centre = hotspot$centre,
-                                       sigma = hotspot$sigma,
-                                       amplitude = hotspot$amplitude)
+    density_true <- add.hotspot(object = density_true,
+                                centre = hotspot$centre,
+                                sigma = hotspot$sigma,
+                                amplitude = hotspot$amplitude)
   }
   
   return(density_true)
@@ -69,19 +69,17 @@ make_hotspot_density <- function(region,
 ## population iteration from the population description, detectability, and region
 
 generate_simulated_pop <- function(region,
+                                   density_true,
                                    N = true_N,
-                                   x_space = density_grid_spacing,
-                                   hotspots = my_hotspots,
                                    scale_param = scale_parameter,
                                    truncation = trunc_dist) {
   
-  density_true <- make_hotspot_density(region = region,
-                                       hotspots = hotspots,
-                                       x_space = x_space)
+  # Extract the spacing directly from the provided density object
+  x_space <- density_obj@x.space
   
   density_surface_true <- density_true@density.surface[[1]] |>
     mutate(
-      area = as.numeric(sf::st_area(geometry)),
+      area = as.numeric(st_area(geometry)),
       density = density * N / sum(density * area) # might not need this anymore
       # nevermind, it ensures that the number of animals matches true_N 
     ) |>
@@ -136,7 +134,7 @@ generate_survey_data <- function(region,
   
   design <- make.design(
     region        = region,
-    transect.type = transect_type,  # Evaluates the literal variable passed ("point" or "line")
+    transect.type = transect_type,  # points or lines
     design        = "systematic",
     spacing       = spacing,
     edge.protocol = "minus",
@@ -146,21 +144,25 @@ generate_survey_data <- function(region,
   
   transects <- generate.transects(design)
   
-  # Conditional routing for dsims strict Survey classes 
-  if (transect_type == "point") {
-    survey <- new(
-      Class = "Survey.PT", 
-      population = realized_population,
-      transect = transects,
-      rad.truncation = truncation 
-    )
-  } else {
+  # first example of ifelse for points or lines 
+  if (transect_type == "line") {
+    
     survey <- new(
       Class = "Survey.LT", 
       population = realized_population,
       transect = transects,
       perp.truncation = truncation
-    )
+      )
+    
+  } else {
+    
+    survey <- new(
+      Class = "Survey.PT", 
+      population = realized_population,
+      transect = transects,
+      rad.truncation = truncation
+      )
+    
   }
   
   observed_survey <- run.survey(survey, region = region)
@@ -169,7 +171,8 @@ generate_survey_data <- function(region,
     design = design,
     transects = transects,
     dist_data = observed_survey@dist.data
-  )
+    )
+  
 }
 
 ## fits a ds() model to the above survey data and stores its results
@@ -200,7 +203,7 @@ fit_ds_model <- function(dist_data,
   sigma_hat <- as.numeric(exp(coef(m1$ddf)$scale["(Intercept)", "estimate"]))
   
   list(
-    detection_model = m1,
+    ds_model = m1,
     N_hat = N_hat,
     se_m1 = se_ds,
     sigma_hat = sigma_hat
@@ -211,22 +214,24 @@ fit_ds_model <- function(dist_data,
 fit_dsm_model <- function(dist_data,
                           transects,
                           region,
-                          detection_model,
+                          ds_model,
                           N_hat,
                           transect_type = points_or_lines,
                           truncation = trunc_dist,
                           x_space = density_grid_spacing,
                           y_space = density_grid_spacing) {
   
-  m1 <- detection_model
+  m1 <- ds_model
   
   # data wrangling for dsm()
   
   samplers <- transects@samplers
   
   if (transect_type == "line") {
+    
     ## Line Transects:
     # split transects into segments (using grid spacing as a starting value)
+    
     # segment_length <- y_space/3
     segment_length <- trunc_dist # maybe twice the truncation distance?
     
@@ -243,7 +248,7 @@ fit_dsm_model <- function(dist_data,
       tr_label <- as.character(samplers$transect[i])
       
       # Calculate total line length (dropping units for dsm)
-      L <- as.numeric(sf::st_length(geom))
+      L <- as.numeric(st_length(geom))
       
       # Determine number of segments for this transect
       num_segs <- max(1, round(L / segment_length))
@@ -295,9 +300,11 @@ fit_dsm_model <- function(dist_data,
       select(object, Sample.Label, size, distance)
     
   } else {
+    
     ## Point transects:
+    
     # Points are already discrete, no geometry splitting needed
-    sampler_xy <- sf::st_coordinates(samplers)
+    sampler_xy <- st_coordinates(samplers)
     
     segdata <- samplers |>
       sf::st_drop_geometry() |>
@@ -337,7 +344,8 @@ fit_dsm_model <- function(dist_data,
   ## Fitting the dsm() models 
   
   # Because the lines have now been spatially segmented, 
-  # BOTH points and lines can universally use the 2D s(x, y) spatial smooth!
+  # both points and lines can use the 2D s(x, y) 
+  
   dsm1 <- dsm(
     count ~ s(x, y), 
     ddf.obj = m1,
@@ -347,7 +355,6 @@ fit_dsm_model <- function(dist_data,
     method = "REML",
     convert.units = 1
   )
-  
   
   ## prediction from dsm() 
   
@@ -388,7 +395,6 @@ fit_dsm_model <- function(dist_data,
   )
   
   
-  
   ## building a dsm surface object from preds  
   
   if (transect_type == "line") {
@@ -396,17 +402,19 @@ fit_dsm_model <- function(dist_data,
     dsm_surface <- pred_grid |> 
       group_by(strata, x) |> 
       summarize(
-        N_hat_pred = sum(N_hat_pred, na.rm = TRUE),
+        N_hat_pred = sum(N_hat_pred, na.rm = TRUE), # sum over transect segments
         area = sum(area, na.rm = TRUE),
-        geometry = sf::st_union(geometry),
+        geometry = st_union(geometry),
         .groups = "drop"
       ) |> 
       mutate(density = pmax(N_hat_pred / area, .Machine$double.eps), y = 0) |> 
       select(strata, density, x, y, N_hat_pred, area, geometry)
     
   } else {
+    
     dsm_surface <- pred_grid |> 
       select(strata, density, x, y, N_hat_pred, area, geometry)
+    
   }
   
   list(
@@ -424,11 +432,10 @@ fit_dsm_model <- function(dist_data,
 
 ## Calculate the variance estimators
 
-## Calculate the variance estimators
 calculate_variance_estimators <- function(obsdata,
                                           segdata,
                                           region,
-                                          detection_model,
+                                          ds_model,
                                           dsm_model,
                                           dsm_surface,
                                           pred_grid,
@@ -438,27 +445,36 @@ calculate_variance_estimators <- function(obsdata,
                                           spacing = design_spacing,
                                           truncation = trunc_dist) {
   
-  # If the simulated survey yielded no observations, the models won't fit
-  # Return NULL safely instead of breaking.
+  # Return NULL safely if no obs instead of breaking.
   if (is.null(dsm_model)) {
     return(NULL)
   }
   
-  m1 <- detection_model
+  m1 <- ds_model
   dsm1 <- dsm_model
   
-  ##
-  ## Delta Method Prep (Shared by both Lines and Points)
-  ##
+  # empty object for variance estimate storage
+  analytical_variances <- NULL
+  
+  # pulls value for delta method variance calculation later
   
   # Safely extract the squared CV of the detection probability 
+  # Checks the dht summary first, falls back to the ddf summary if NULL
+  
   cv_p_val <- m1$dht$individuals$summary$cv.p[1]
-  if (!is.null(cv_p_val)) {
+  
+  if (!is.null(cv_p_val) && length(cv_p_val) > 0) {
+    
     cv_Pa_sq <- (as.numeric(cv_p_val))^2
+    
   } else {
+    
     ddf_sum <- summary(m1$ddf)
     cv_Pa_sq <- (ddf_sum$average.p.se / ddf_sum$average.p)^2
+    
   }
+  
+  
   
   # Calculate global Density
   Region_Area <- sum(pred_grid$area, na.rm = TRUE)
@@ -474,132 +490,21 @@ calculate_variance_estimators <- function(obsdata,
     list(
       var_N = var_N, 
       var_D = var_D,
-      se_N = sqrt(var_N), 
-      se_D = sqrt(var_D)
+      se_N = sqrt(max(0, var_N)), 
+      se_D = sqrt(max(0, var_D))
     )
   }
   
-  ##
-  ## Stage 1: Construct spatial support (muvec)
-  ##
-  
-  # Both striplets and boxlets use the predicted abundance from the DSM surface.
-  # For lines, the surface was grouped by x (forming vertical strips).
-  # For points, the surface retains distinct x, y coordinates (forming boxlets).
-  muvec <- dsm_surface$N_hat_pred 
-  midvec_x <- dsm_surface$x
-  midvec_y <- dsm_surface$y
-  musum <- sum(muvec, na.rm = TRUE)
-  
-  bbox <- sf::st_bbox(region@region)
-  x_min <- as.numeric(bbox["xmin"])
-  x_max <- as.numeric(bbox["xmax"])
-  y_min <- as.numeric(bbox["ymin"])
-  y_max <- as.numeric(bbox["ymax"])
-  
-  ##
-  ## Stage 2: Construct the Detection Matrix (gmat)
-  ##
+  ## lines vs points analytical estimators
   
   if (transect_type == "line") {
     
-    B_shifts <- 50 
-    bvec <- seq(0, spacing, length.out = B_shifts)
-    B <- length(bvec)
-    
-    gmat <- matrix(0, nrow = length(muvec), ncol = B)
-    effort_b <- numeric(B)
-    
-    for (b_idx in 1:B) {
-      b_val <- bvec[b_idx]
-      lines_grid <- seq(x_min + b_val, x_max, by = spacing)
-      
-      # Exact line length calculation for effort inside region
-      line_strings <- lapply(lines_grid, function(x) {
-        sf::st_linestring(matrix(c(x, y_min, x, y_max), ncol = 2, byrow = TRUE))
-      })
-      lines_sf <- sf::st_sfc(line_strings, crs = sf::st_crs(region@region))
-      clipped_lines <- suppressWarnings(sf::st_intersection(lines_sf, region@region))
-      effort_b[b_idx] <- as.numeric(sum(sf::st_length(clipped_lines)))
-      
-      # Distance to nearest line for each striplet
-      min_dist <- sapply(midvec_x, function(m) min(abs(m - lines_grid)))
-      
-      g_b <- exp(- (min_dist^2) / (2 * sigma_hat^2))
-      g_b[min_dist > truncation] <- 0 
-      
-      gmat[, b_idx] <- g_b
-    }
-    
-  } else if (transect_type == "point") {
-    
-    shift_res <- spacing / 5
-    b_x <- seq(0, spacing - shift_res, by = shift_res)
-    b_y <- seq(0, spacing - shift_res, by = shift_res)
-    shifts <- expand.grid(x = b_x, y = b_y)
-    B <- nrow(shifts)
-    
-    gmat <- matrix(0, nrow = length(muvec), ncol = B)
-    effort_b <- numeric(B)
-    
-    # Establish baseline infinite point grid
-    base_x <- seq(x_min - spacing, x_max + spacing, by = spacing)
-    base_y <- seq(y_min - spacing, y_max + spacing, by = spacing)
-    base_grid <- expand.grid(X = base_x, Y = base_y)
-    
-    for (i in 1:B) {
-      shifted_x <- base_grid$X + shifts$x[i]
-      shifted_y <- base_grid$Y + shifts$y[i]
-      
-      # Count valid effort (total points falling perfectly inside the region boundaries)
-      shifted_points <- sf::st_as_sf(data.frame(X = shifted_x, Y = shifted_y), 
-                                     coords = c("X", "Y"), crs = sf::st_crs(region@region))
-      intersects <- sf::st_intersects(shifted_points, region@region, sparse = FALSE)
-      effort_b[i] <- sum(intersects)
-      
-      # Distance to nearest point for each boxlet 
-      # Optimized: fast mathematical Euclidean matching over discrete grid logic
-      nearest_x <- round((midvec_x - shifts$x[i]) / spacing) * spacing + shifts$x[i]
-      nearest_y <- round((midvec_y - shifts$y[i]) / spacing) * spacing + shifts$y[i]
-      min_dist <- sqrt((midvec_x - nearest_x)^2 + (midvec_y - nearest_y)^2)
-      
-      # Determine continuous probability inclusion 
-      g_b <- exp(- (min_dist^2) / (2 * sigma_hat^2))
-      g_b[min_dist > truncation] <- 0 
-      
-      gmat[, i] <- g_b
-    }
-  }
-  
-  ##
-  ## Stage 3: Fewster Variance Engine (Identical for both Boxlets & Striplets)
-  ##
-  
-  # Protect against theoretical shift permutations completely outside the region
-  valid_b <- effort_b > 0
-  effort_b <- effort_b[valid_b]
-  gmat <- gmat[, valid_b, drop = FALSE]
-  
-  # A_b is the expected count for each grid alignment. Vectorized for extreme speed.
-  Abvec <- as.numeric(crossprod(gmat, muvec))
-  
-  # Master analytical variance equation 
-  var_ER_analytical <- mean((Abvec + (Abvec^2) * (1 - 1/musum)) / (effort_b^2)) - (mean(Abvec / effort_b))^2
-  var_ER_analytical <- max(0, var_ER_analytical)
-  
-  erhat_analytical <- mean(Abvec / effort_b, na.rm = TRUE)
-  delta_analytical <- apply_delta(var_ER_analytical, erhat_analytical)
-  
-  
-  ##
-  ## Stage 4: Empirical Estimators & Output Structuring
-  ##
-  
-  if (transect_type == "line") {
+    # Uses Fewster code to calculate 2009 estimators and striplet est.
     
     obs_counts <- obsdata |> 
       group_by(Sample.Label) |> 
-      summarize(count = sum(size), .groups = "drop")
+      summarize(count = sum(size), 
+                .groups = "drop")
     
     line_data <- segdata |> 
       left_join(obs_counts, by = "Sample.Label") |> 
@@ -608,20 +513,23 @@ calculate_variance_estimators <- function(obsdata,
       summarize(
         count = sum(count),
         Effort = sum(Effort),
-        x = mean(x), 
+        x = mean(x), # Get the average X-coordinate of the whole line
         .groups = "drop") |> 
-      arrange(x) 
+      arrange(x) # Re-sorts the whole lines spatially left-to-right
     
     nspotted <- line_data$count
     lvec <- line_data$Effort
     L <- sum(lvec)
-    k <- length(lvec) 
+    k <- length(lvec) # 'k' is back to being the true number of lines!
     ntot <- sum(nspotted)
     
-    ## Empirical Estimators (R2, R3, S1, S2, O1, O2)
+    # Empirical Estimators (R2, R3, S1, S2, O1, O2) 
+    
+    ## R2, R3
     var.R2 <- (k * sum(lvec^2 * (nspotted/lvec - ntot/L)^2)) / (L^2 * (k - 1))
     var.R3 <- 1 / (L * (k - 1)) * sum(lvec * (nspotted/lvec - ntot/L)^2)
     
+    ## Stratified (S1, S2)
     H_strat <- floor(k/2)
     k.h <- rep(2, H_strat)
     if(k %% 2 > 0) k.h[H_strat] <- 3
@@ -645,6 +553,7 @@ calculate_variance_estimators <- function(obsdata,
     var.S1 <- sum.S1 / L^2
     var.S2 <- sum.S2 / L^2
     
+    ## Overlapping (O1, O2)
     lvec.1 <- lvec[-k]; lvec.2 <- lvec[-1]
     nvec.1 <- nspotted[-k]; nvec.2 <- nspotted[-1]
     ervec.1 <- nvec.1/lvec.1; ervec.2 <- nvec.2/lvec.2
@@ -652,15 +561,63 @@ calculate_variance_estimators <- function(obsdata,
     var.O1 <- k / (2 * L^2 * (k - 1)) * sum((nvec.1 - nvec.2 - ntot/L * (lvec.1 - lvec.2))^2)
     var.O2 <- (2 * k) / (L^2 * (k - 1)) * sum(((lvec.1 * lvec.2)/(lvec.1 + lvec.2))^2 * (ervec.1 - ervec.2)^2)
     
-    erhat_obs <- ntot / L
     
+    # Striplet Variance 
+    
+    muvec <- dsm_surface$N_hat_pred 
+    midvec <- dsm_surface$x
+    musum <- sum(muvec, na.rm = TRUE)
+    
+    bbox <- sf::st_bbox(region@region)
+    y_length <- as.numeric(bbox["ymax"] - bbox["ymin"])
+    x_min <- as.numeric(bbox["xmin"])
+    x_max <- as.numeric(bbox["xmax"])
+    
+    B <- 50 # case study in 2011 paper used 69, this is just a baseline
+    bvec <- seq(0, spacing, length.out = B)
+    Lbvec <- rep(0, B)
+    Abvec <- rep(0, B)
+    
+    for (b_idx in 1:B) {
+      b_val <- bvec[b_idx]
+      lines_grid <- seq(x_min + b_val, x_max, by = spacing)
+      
+      # Build theoretical vertical sf lines extending across the bounding box
+      line_strings <- lapply(lines_grid, function(x) {
+        sf::st_linestring(matrix(c(x, bbox["ymin"], x, bbox["ymax"]), ncol = 2, byrow = TRUE))
+      })
+      lines_sf <- sf::st_sfc(line_strings, crs = sf::st_crs(region@region))
+      
+      # Clip the theoretical lines to the exact boundary of the irregular region
+      clipped_lines <- suppressWarnings(sf::st_intersection(lines_sf, region@region))
+      
+      # Calculate exact line length inside the polygon bounds
+      Lbvec[b_idx] <- as.numeric(sum(sf::st_length(clipped_lines)))
+      
+      min_dist <- sapply(midvec, function(m) min(abs(m - lines_grid)))
+      
+      g_b <- exp(- (min_dist^2) / (2 * sigma_hat^2))
+      g_b[min_dist > truncation] <- 0 
+      
+      Abvec[b_idx] <- sum(muvec * g_b, na.rm = TRUE)
+    }
+    
+    var_ER_striplet <- mean((Abvec + (Abvec^2) * (1 - 1/musum)) / (Lbvec^2)) - (mean(Abvec / Lbvec))^2
+    
+    # Define Encounter Rates (Observed vs. Model)
+    erhat_obs <- ntot / L
+    erhat_striplet <- mean(Abvec / Lbvec, na.rm = TRUE)
+    
+    # Apply Delta Method
     delta_R2 <- apply_delta(var.R2, erhat_obs)
     delta_R3 <- apply_delta(var.R3, erhat_obs)
     delta_S1 <- apply_delta(var.S1, erhat_obs)
     delta_S2 <- apply_delta(var.S2, erhat_obs)
     delta_O1 <- apply_delta(var.O1, erhat_obs)
     delta_O2 <- apply_delta(var.O2, erhat_obs)
+    delta_striplet <- apply_delta(var_ER_striplet, erhat_striplet)
     
+    # Bundle all variances into a comprehensive flat list
     analytical_variances <- list(
       var_ER_R2 = var.R2,
       var_ER_R3 = var.R3,
@@ -668,7 +625,7 @@ calculate_variance_estimators <- function(obsdata,
       var_ER_S2 = var.S2,
       var_ER_O1 = var.O1,
       var_ER_O2 = var.O2,
-      var_ER_striplet = var_ER_analytical,
+      var_ER_striplet = var_ER_striplet,
       
       se_N_R2 = delta_R2$se_N,
       se_N_R3 = delta_R3$se_N,
@@ -676,7 +633,7 @@ calculate_variance_estimators <- function(obsdata,
       se_N_S2 = delta_S2$se_N,
       se_N_O1 = delta_O1$se_N,
       se_N_O2 = delta_O2$se_N,
-      se_N_striplet = delta_analytical$se_N,
+      se_N_striplet = delta_striplet$se_N,
       
       se_D_R2 = delta_R2$se_D,
       se_D_R3 = delta_R3$se_D,
@@ -684,357 +641,124 @@ calculate_variance_estimators <- function(obsdata,
       se_D_S2 = delta_S2$se_D,
       se_D_O1 = delta_O1$se_D,
       se_D_O2 = delta_O2$se_D,
-      se_D_striplet = delta_analytical$se_D
+      se_D_striplet = delta_striplet$se_D
     )
     
   } else if (transect_type == "point") {
     
-    # Points lack the traditional empirical estimators, returning purely the boxlet 
+    # Boxlet variance estimator
+    
+    grid_res <- 50 # Target number of boxlets along the longest axis
+    
+    # tessellate the region to create boxlets
+    region_sf <- region@region
+    region_bbox <- sf::st_bbox(region_sf)
+    
+    # Calculate the geographic span of both axes and find longer axis
+    x_range <- as.numeric(region_bbox["xmax"] - region_bbox["xmin"])
+    y_range <- as.numeric(region_bbox["ymax"] - region_bbox["ymin"])
+    max_range <- max(x_range, y_range)
+    
+    # Calculate the single square dimension required to fit exactly 50 boxlets
+    square_dim <- max_range / grid_cells
+    
+    # Calculate width and height required to get that number of boxlets per side
+    dx <- as.numeric(region_bbox["xmax"] - region_bbox["xmin"]) / grid_cells
+    dy <- as.numeric(region_bbox["ymax"] - region_bbox["ymin"]) / grid_cells
+    
+    boxlets <- sf::st_make_grid(region_sf, 
+                                cellsize = c(square_dim, square_dim), 
+                                square = TRUE)
+    
+    # Build the sf object and optionally filter out boxlets 
+    # that fall completely outside an irregular region boundary
+    boxlets_sf <- sf::st_sf(geometry = boxlets) |> 
+      dplyr::mutate(
+        box_id = dplyr::row_number()
+      )
+    
+    # Keep only the boxlets whose centroids fall inside the actual survey region
+    boxlet_cents <- sf::st_centroid(boxlets_sf)
+    inside_region <- sf::st_intersects(boxlet_cents, region_sf, sparse = FALSE)[, 1]
+    boxlets_sf <- boxlets_sf[inside_region, ]
+    
+    # Recalculate areas after clipping/filtering
+    boxlets_sf <- boxlets_sf |> 
+      dplyr::mutate(
+        area = as.numeric(sf::st_area(geometry))
+      )
+    
+    boxlet_centroids <- sf::st_centroid(boxlets_sf)
+    boxlet_coords <- sf::st_coordinates(boxlet_centroids)
+    boxlets_sf$x <- boxlet_coords[, "X"]
+    boxlets_sf$y <- boxlet_coords[, "Y"]
+    
+    # Estimate Boxlet Probabilities (p_j)
+    pred_data <- sf::st_drop_geometry(boxlets_sf)
+    pred_N <- predict(dsm1, newdata = pred_data, off.set = pred_data$area, type = "response")
+    p_j <- pred_N / sum(pred_N, na.rm = TRUE)
+    
+    # Safely compute Average Detection Probability (P_a)
+    fitted_probs <- m1$ddf$fitted
+    if (is.null(fitted_probs) || length(fitted_probs) == 0) {
+      P_a <- summary(m1$ddf)$average.p
+    } else {
+      P_a <- length(fitted_probs) / sum(1 / fitted_probs)
+    }
+    
+    # Simulate the Grid Shifts (b)
+    shift_res <- spacing / 5 
+    b_x <- seq(0, spacing - shift_res, by = shift_res)
+    b_y <- seq(0, spacing - shift_res, by = shift_res)
+    shifts <- expand.grid(x = b_x, y = b_y)
+    B <- nrow(shifts) 
+    
+    A_b <- numeric(B)
+    
+    base_x <- seq(region_bbox["xmin"] - spacing, region_bbox["xmax"] + spacing, by = spacing)
+    base_y <- seq(region_bbox["ymin"] - spacing, region_bbox["ymax"] + spacing, by = spacing)
+    base_grid <- expand.grid(X = base_x, Y = base_y)
+    
+    # Calculate Q(b) for Each Shift
+    for (i in 1:B) {
+      shifted_grid <- base_grid
+      shifted_grid$X <- shifted_grid$X + shifts$x[i]
+      shifted_grid$Y <- shifted_grid$Y + shifts$y[i]
+      
+      shifted_points <- sf::st_as_sf(shifted_grid, coords = c("X", "Y"))
+      shifted_buffers <- sf::st_buffer(shifted_points, dist = truncation)
+      shifted_survey_area <- sf::st_union(shifted_buffers)
+      
+      active_boxlets <- sf::st_intersects(boxlet_centroids, shifted_survey_area, sparse = FALSE)[, 1]
+      
+      Q_b <- sum(p_j[active_boxlets], na.rm = TRUE) * P_a
+      A_b[i] <- N_hat * Q_b
+    }
+    
+    # Apply the Multinomial Equation
+    mean_A <- mean(A_b)
+    var_n <- (1/B) * sum(A_b + (A_b^2) * (1 - 1/N_hat)) - mean_A^2
+    var_n_boxlet <- max(0, var_n) 
+    
+    # Delta Method Integration for Boxlets
+    k_points <- nrow(segdata)
+    erhat_boxlet <- mean_A / k_points
+    var_ER_boxlet <- var_n_boxlet / (k_points^2)
+    
+    delta_boxlet <- apply_delta(var_ER_boxlet, erhat_boxlet)
+    
     analytical_variances <- list(
-      var_ER_boxlet = var_ER_analytical,
-      se_N_boxlet = delta_analytical$se_N,
-      se_D_boxlet = delta_analytical$se_D
+      var_ER_boxlet = var_ER_boxlet, 
+      se_N_boxlet = delta_boxlet$se_N,
+      se_D_boxlet = delta_boxlet$se_D
     )
   }
   
   return(analytical_variances)
 }
 
-# calculate_variance_estimators <- function(obsdata,
-#                                           segdata,
-#                                           region,
-#                                           detection_model,
-#                                           dsm_model,
-#                                           dsm_surface,
-#                                           pred_grid,
-#                                           N_hat,
-#                                           sigma_hat,
-#                                           transect_type = points_or_lines,
-#                                           spacing = design_spacing,
-#                                           truncation = trunc_dist) {
-#   
-#   # If the simulated survey yielded no observations, the models won't fit
-#   # Return NULL safely instead of breaking.
-#   if (is.null(dsm_model)) {
-#     return(NULL)
-#   }
-#   
-#   m1 <- detection_model
-#   dsm1 <- dsm_model
-#   
-#   # empty object for variance estimate storage
-#   analytical_variances <- NULL
-#   
-#   
-#   ## Delta Method Prep (Shared by both Lines and Points)
-#   
-#   # Safely extract the squared CV of the detection probability 
-#   # Checks the dht summary first, falls back to the ddf summary if NULL
-#   cv_p_val <- m1$dht$individuals$summary$cv.p[1]
-#   if (!is.null(cv_p_val)) {
-#     cv_Pa_sq <- (as.numeric(cv_p_val))^2
-#   } else {
-#     ddf_sum <- summary(m1$ddf)
-#     cv_Pa_sq <- (ddf_sum$average.p.se / ddf_sum$average.p)^2
-#   }
-#   
-#   # Calculate global Density
-#   Region_Area <- sum(pred_grid$area, na.rm = TRUE)
-#   D_hat <- N_hat / Region_Area
-#   
-#   # Delta Method Combiner Function
-#   # NOTE: Group-size variance is intentionally omitted from this equation 
-#   # because the simulation forces `size = 1` (individuals) in the obsdata.
-#   apply_delta <- function(var_ER, erhat) {
-#     cv_ER_sq <- var_ER / (erhat^2)
-#     var_N <- (N_hat^2) * (cv_ER_sq + cv_Pa_sq)
-#     var_D <- (D_hat^2) * (cv_ER_sq + cv_Pa_sq)
-#     
-#     # Convert Variances back to Standard Errors for comparison
-#     list(
-#       var_N = var_N, 
-#       var_D = var_D,
-#       se_N = sqrt(var_N), 
-#       se_D = sqrt(var_D)
-#     )
-#   }
-#   
-#   
-#   ##
-#   ## Line Transect Estimators
-#   ##
-#   if (transect_type == "line") {
-#     
-#     obs_counts <- obsdata |> 
-#       group_by(Sample.Label) |> 
-#       summarize(count = sum(size), 
-#                 .groups = "drop")
-#     
-#     line_data <- segdata |> 
-#       left_join(obs_counts, by = "Sample.Label") |> 
-#       mutate(count = replace_na(count, 0)) |> 
-#       group_by(orig_transect) |> 
-#       summarize(
-#         count = sum(count),
-#         Effort = sum(Effort),
-#         x = mean(x), # Get the average X-coordinate of the whole line
-#         .groups = "drop") |> 
-#       arrange(x) # Re-sorts the whole lines spatially left-to-right
-#     
-#     nspotted <- line_data$count
-#     lvec <- line_data$Effort
-#     L <- sum(lvec)
-#     k <- length(lvec) # 'k' is back to being the true number of lines!
-#     ntot <- sum(nspotted)
-#     
-#     ## Empirical Estimators (R2, R3, S1, S2, O1, O2)
-#     
-#     ## R2, R3
-#     var.R2 <- (k * sum(lvec^2 * (nspotted/lvec - ntot/L)^2)) / (L^2 * (k - 1))
-#     var.R3 <- 1 / (L * (k - 1)) * sum(lvec * (nspotted/lvec - ntot/L)^2)
-#     
-#     ## Stratified (S1, S2)
-#     H_strat <- floor(k/2)
-#     k.h <- rep(2, H_strat)
-#     if(k %% 2 > 0) k.h[H_strat] <- 3
-#     end.strat <- cumsum(k.h)
-#     begin.strat <- cumsum(k.h) - k.h + 1
-#     
-#     sum.S1 <- 0; sum.S2 <- 0
-#     for(h in 1:H_strat) {
-#       n.strat <- nspotted[begin.strat[h]:end.strat[h]]
-#       l.strat <- lvec[begin.strat[h]:end.strat[h]]
-#       nbar.strat <- mean(n.strat)
-#       lbar.strat <- mean(l.strat)
-#       
-#       inner.S1 <- sum((n.strat - nbar.strat - (ntot/L) * (l.strat - lbar.strat))^2)
-#       sum.S1 <- sum.S1 + k.h[h] / (k.h[h] - 1) * inner.S1
-#       
-#       L.strat <- sum(l.strat)
-#       var.strat.S2 <- k.h[h] / (L.strat^2 * (k.h[h] - 1)) * sum(l.strat^2 * (n.strat/l.strat - nbar.strat/lbar.strat)^2)
-#       sum.S2 <- sum.S2 + L.strat^2 * var.strat.S2
-#     }
-#     var.S1 <- sum.S1 / L^2
-#     var.S2 <- sum.S2 / L^2
-#     
-#     ## Overlapping (O1, O2)
-#     lvec.1 <- lvec[-k]; lvec.2 <- lvec[-1]
-#     nvec.1 <- nspotted[-k]; nvec.2 <- nspotted[-1]
-#     ervec.1 <- nvec.1/lvec.1; ervec.2 <- nvec.2/lvec.2
-#     
-#     var.O1 <- k / (2 * L^2 * (k - 1)) * sum((nvec.1 - nvec.2 - ntot/L * (lvec.1 - lvec.2))^2)
-#     var.O2 <- (2 * k) / (L^2 * (k - 1)) * sum(((lvec.1 * lvec.2)/(lvec.1 + lvec.2))^2 * (ervec.1 - ervec.2)^2)
-#     
-#     
-#     ## Striplet Variance
-#     muvec <- dsm_surface$N_hat_pred 
-#     midvec <- dsm_surface$x
-#     musum <- sum(muvec, na.rm = TRUE)
-#     
-#     bbox <- sf::st_bbox(region@region)
-#     y_length <- as.numeric(bbox["ymax"] - bbox["ymin"])
-#     x_min <- as.numeric(bbox["xmin"])
-#     x_max <- as.numeric(bbox["xmax"])
-#     
-#     B <- 50 
-#     bvec <- seq(0, spacing, length.out = B)
-#     Lbvec <- rep(0, B)
-#     Abvec <- rep(0, B)
-#     
-#     for (b_idx in 1:B) {
-#       b_val <- bvec[b_idx]
-#       lines_grid <- seq(x_min + b_val, x_max, by = spacing)
-#       
-#       # Build theoretical vertical sf lines extending across the bounding box
-#       line_strings <- lapply(lines_grid, function(x) {
-#         sf::st_linestring(matrix(c(x, bbox["ymin"], x, bbox["ymax"]), ncol = 2, byrow = TRUE))
-#       })
-#       lines_sf <- sf::st_sfc(line_strings, crs = sf::st_crs(region@region))
-#       
-#       # Clip the theoretical lines to the exact boundary of the irregular region
-#       clipped_lines <- suppressWarnings(sf::st_intersection(lines_sf, region@region))
-#       
-#       # Calculate exact line length inside the polygon bounds
-#       Lbvec[b_idx] <- as.numeric(sum(sf::st_length(clipped_lines)))
-#       
-#       min_dist <- sapply(midvec, function(m) min(abs(m - lines_grid)))
-#       
-#       g_b <- exp(- (min_dist^2) / (2 * sigma_hat^2))
-#       g_b[min_dist > truncation] <- 0 
-#       
-#       Abvec[b_idx] <- sum(muvec * g_b, na.rm = TRUE)
-#     }
-#     
-#     var_ER_striplet <- mean((Abvec + (Abvec^2) * (1 - 1/musum)) / (Lbvec^2)) - (mean(Abvec / Lbvec))^2
-#     
-#     # Define Encounter Rates (Observed vs. Model)
-#     # Traditional estimators use the raw observed encounter rate:
-#     erhat_obs <- ntot / L
-#     
-#     # The Striplet estimator should theoretically use the mean corresponding
-#     # directly to the striplet model rather than the raw counts:
-#     erhat_striplet <- mean(Abvec / Lbvec, na.rm = TRUE)
-#     
-#     # Apply to all empirical estimators using the observed encounter rate
-#     delta_R2 <- apply_delta(var.R2, erhat_obs)
-#     delta_R3 <- apply_delta(var.R3, erhat_obs)
-#     delta_S1 <- apply_delta(var.S1, erhat_obs)
-#     delta_S2 <- apply_delta(var.S2, erhat_obs)
-#     delta_O1 <- apply_delta(var.O1, erhat_obs)
-#     delta_O2 <- apply_delta(var.O2, erhat_obs)
-#     
-#     # Apply to the striplet estimator using the strictly aligned striplet mean
-#     delta_striplet <- apply_delta(var_ER_striplet, erhat_striplet)
-#     
-#     # Bundle all variances into a comprehensive flat list
-#     analytical_variances <- list(
-#       # Encounter Rate Variances (Raw)
-#       var_ER_R2 = var.R2,
-#       var_ER_R3 = var.R3,
-#       var_ER_S1 = var.S1,
-#       var_ER_S2 = var.S2,
-#       var_ER_O1 = var.O1,
-#       var_ER_O2 = var.O2,
-#       var_ER_striplet = var_ER_striplet,
-#       
-#       # Final Abundance Standard Errors se(N) -- USE THESE FOR COMPARISON
-#       se_N_R2 = delta_R2$se_N,
-#       se_N_R3 = delta_R3$se_N,
-#       se_N_S1 = delta_S1$se_N,
-#       se_N_S2 = delta_S2$se_N,
-#       se_N_O1 = delta_O1$se_N,
-#       se_N_O2 = delta_O2$se_N,
-#       se_N_striplet = delta_striplet$se_N,
-#       
-#       # Final Density Standard Errors se(D)
-#       se_D_R2 = delta_R2$se_D,
-#       se_D_R3 = delta_R3$se_D,
-#       se_D_S1 = delta_S1$se_D,
-#       se_D_S2 = delta_S2$se_D,
-#       se_D_O1 = delta_O1$se_D,
-#       se_D_O2 = delta_O2$se_D,
-#       se_D_striplet = delta_striplet$se_D
-#     )
-#     
-#     
-#     ##
-#     ## Point Transect Estimators 
-#     ##
-#   } else if (transect_type == "point") {
-#     
-#     ### Boxlet Variance ----
-#     grid_res <- 100
-#     
-#     # Tessellate the Region (The Boxlets)
-#     region_sf <- region@region
-#     region_bbox <- sf::st_bbox(region_sf)
-#     
-#     # Create a fine grid of 2D 'boxlets' across the region
-#     boxlets <- sf::st_make_grid(region_sf, cellsize = c(grid_res, grid_res), square = TRUE)
-#     boxlets_sf <- sf::st_sf(geometry = boxlets) |> 
-#       dplyr::mutate(
-#         box_id = dplyr::row_number(),
-#         area = as.numeric(sf::st_area(geometry))
-#       )
-#     
-#     boxlet_centroids <- sf::st_centroid(boxlets_sf)
-#     boxlet_coords <- sf::st_coordinates(boxlet_centroids)
-#     boxlets_sf$x <- boxlet_coords[, "X"]
-#     boxlets_sf$y <- boxlet_coords[, "Y"]
-#     
-#     ## Estimate Boxlet Probabilities (p_j)
-#     
-#     # Predict the spatial trend using the 2D GAM s(x,y)
-#     pred_data <- sf::st_drop_geometry(boxlets_sf)
-#     pred_N <- predict(dsm1, newdata = pred_data, off.set = pred_data$area, type = "response")
-#     
-#     # Normalize predictions into multinomial probabilities
-#     p_j <- pred_N / sum(pred_N, na.rm = TRUE)
-#     
-#     # Safely compute Average Detection Probability (P_a)
-#     # The standard math is: P_a = n / N_covered = length(fitted) / sum(1 / fitted)
-#     fitted_probs <- m1$ddf$fitted
-#     if (is.null(fitted_probs) || length(fitted_probs) == 0) {
-#       P_a <- summary(m1$ddf)$average.p
-#     } else {
-#       P_a <- length(fitted_probs) / sum(1 / fitted_probs)
-#     }
-#     
-#     ## Simulate the Grid Shifts (b)
-#     
-#     # Define the uniform sampling frame for the start point 'b'
-#     shift_res <- spacing / 5 # The number of shifts per axis (adjust for speed vs. precision)
-#     b_x <- seq(0, spacing - shift_res, by = shift_res)
-#     b_y <- seq(0, spacing - shift_res, by = shift_res)
-#     shifts <- expand.grid(x = b_x, y = b_y)
-#     B <- nrow(shifts) # Total number of possible grid alignments
-#     
-#     # Pre-allocate A(b) vector (expected counts per alignment)
-#     A_b <- numeric(B)
-#     
-#     # Create a theoretical base grid of points spanning far outside the region 
-#     # to ensure full coverage when shifted
-#     base_x <- seq(region_bbox["xmin"] - spacing, region_bbox["xmax"] + spacing, by = spacing)
-#     base_y <- seq(region_bbox["ymin"] - spacing, region_bbox["ymax"] + spacing, by = spacing)
-#     base_grid <- expand.grid(X = base_x, Y = base_y)
-#     
-#     ## Calculate Q(b) for Each Shift
-#     
-#     for (i in 1:B) {
-#       # Shift the theoretical point grid by b_x and b_y
-#       shifted_grid <- base_grid
-#       shifted_grid$X <- shifted_grid$X + shifts$x[i]
-#       shifted_grid$Y <- shifted_grid$Y + shifts$y[i]
-#       
-#       # Convert to spatial points
-#       shifted_points <- sf::st_as_sf(shifted_grid, coords = c("X", "Y"))
-#       
-#       # Create circular buffers (the point transect radii)
-#       shifted_buffers <- sf::st_buffer(shifted_points, dist = truncation)
-#       shifted_survey_area <- sf::st_union(shifted_buffers)
-#       
-#       # Determine which boxlet centroids fall inside the circular samplers
-#       # This is the spatial equivalent of Fewster's 'gbmat' indicator matrix
-#       active_boxlets <- sf::st_intersects(boxlet_centroids, shifted_survey_area, sparse = FALSE)[, 1]
-#       
-#       # Sum the probabilities of active boxlets and adjust for detection
-#       Q_b <- sum(p_j[active_boxlets], na.rm = TRUE) * P_a
-#       
-#       # Expected count for this specific alignment
-#       A_b[i] <- N_hat * Q_b
-#     }
-#     
-#     ## Apply the Multinomial Equation
-#     
-#     # Mean expected count across all grid shifts
-#     mean_A <- mean(A_b)
-#     
-#     # 2D Analytical Variance Equation (from Fewster's mgcv.boxlet.func)
-#     var_n <- (1/B) * sum(A_b + (A_b^2) * (1 - 1/N_hat)) - mean_A^2
-#     var_n_boxlet <- max(0, var_n) # Ensure non-negative variance before rooting
-#     
-#     
-#     # The Delta Method Integration for Boxlets
-#     
-#     # For point transects, Encounter Rate (ER) is count / number of points (n/k)
-#     k_points <- nrow(segdata)
-#     erhat_boxlet <- mean_A / k_points
-#     var_ER_boxlet <- var_n_boxlet / (k_points^2)
-#     
-#     delta_boxlet <- apply_delta(var_ER_boxlet, erhat_boxlet)
-#     
-#     # Bundle all variances into a comprehensive flat list
-#     analytical_variances <- list(
-#       var_ER_boxlet = var_ER_boxlet,
-#       se_N_boxlet = delta_boxlet$se_N,
-#       se_D_boxlet = delta_boxlet$se_D
-#     )
-#   }
-#   
-#   return(analytical_variances)
-# }
 
-## uses the population from get_fit, sigma hat from the ds() model,
+## uses the population from fit_ds_model, sigma hat from the ds() model,
 ## and the survey design to generate an estimated N_hat 
 ## Run this multiple times to estimate a SE by bootstraps
 
@@ -1263,18 +987,18 @@ get_bootstrap_disc_density <- function(region,
   # Bootstrap loop: Evaluate BOTH spatial layout variance and process variance
   for (b in 1:reps) {
     
-    # --- 1. GENERATE NEW RANDOM ANIMAL PLACEMENT ---
+    # generate animal placement in the boxlets
     cell_counts <- as.vector(rmultinom(n = 1, size = N_total, prob = prob_vec))
     
     base_x <- rep(density_surface$x, cell_counts)
     base_y <- rep(density_surface$y, cell_counts)
     base_sizes <- rep(cell_dimensions, cell_counts)
     
-    # Scatter the animals uniformly within the strict boundaries of their assigned boxlets
+    # Scatter the animals uniformly within the boundaries of their assigned boxlets
     animal_x <- base_x + runif(N_total, min = -base_sizes/2, max = base_sizes/2)
     animal_y <- base_y + runif(N_total, min = -base_sizes/2, max = base_sizes/2)
     
-    # --- 2. BUILD S4 POPULATION FOR THIS ITERATION ---
+    # build population based on those placements
     realized_population <- dsims::generate.population(
       object = dummy_pop_desc,
       detectability = detect,
@@ -1287,34 +1011,48 @@ get_bootstrap_disc_density <- function(region,
     native_pop$y <- animal_y
     realized_population@population <- as.data.frame(native_pop)
     
-    # --- 3. RUN SURVEY ---
+    # run surveys
     transects <- generate.transects(design)
     
     if (transect_type == "point") {
-      survey <- new("Survey.PT", population = realized_population, transect = transects, rad.truncation = truncation)
+      survey <- new("Survey.PT", 
+                    population = realized_population, 
+                    transect = transects, 
+                    rad.truncation = truncation)
     } else {
-      survey <- new("Survey.LT", population = realized_population, transect = transects, perp.truncation = truncation)
+      survey <- new("Survey.LT", 
+                    population = realized_population, 
+                    transect = transects, 
+                    perp.truncation = truncation)
     }
     
     survey_run <- suppressWarnings(run.survey(survey, region = region))
     obs_data <- survey_run@dist.data
     
-    # --- 4. FIT MODEL ---
+    # fit ds model to extract n_hat value
     if (nrow(obs_data) > 0) {
       tryCatch({
+        
         capture.output(
-          m2 <- ds(data = obs_data, transect = transect_type, key = "hn", adjustment = NULL, truncation = truncation, quiet = TRUE)
+          m2 <- ds(data = obs_data, 
+                   transect = transect_type, 
+                   key = "hn", 
+                   adjustment = NULL, 
+                   truncation = truncation, 
+                   quiet = TRUE)
         )
+        
         N_hat_results[b] <- as.numeric(m2$dht$individuals$N$Estimate)
+        
       }, error = function(e) {
+        
         N_hat_results[b] <- NA
+        
       })
     }
   }
   
   data.frame(replicate = seq_len(reps), N_hat = N_hat_results)
 }
-
-
 
 ## EOF

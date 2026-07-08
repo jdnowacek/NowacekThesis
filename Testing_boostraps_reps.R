@@ -4,28 +4,32 @@ library(future)
 library(furrr)
 library(parallel)
 
-source(here::here("Functions.R"))
+# Updated to source the new functions file
+source(here::here("Functions2.R"))
 
 # Setup Constants & Scenario Grid -----
 
 # region params
-lower_x <- 0; upper_x <- 10000
-lower_y <- 0; upper_y <- 10000
+lower_x <- 0; upper_x <- 5000
+lower_y <- 0; upper_y <- 5000
 
 # Simulation constants
 true_N <- 1000
 density_grid_spacing <- 500
-scale_parameter <- 250
-trunc_dist <- 500
+scale_parameter <- 100
+trunc_dist <- 300
 design_angle <- 0
-MAX_BOOT_REPS <- 2500
+MAX_BOOT_REPS <- 1000
+design_spacing <- 500
 
-# Define a SINGLE density to test across all methods
-# Using the "Extreme" version as it usually provides a more rigorous test of variance
-hotspots_single <- list(
-  list(centre = c(2000, 2000), sigma = 500, amplitude = 5),
-  list(centre = c(8000, 8000), sigma = 500, amplitude = 5),
-  list(centre = c(2000, 8000), sigma = 500, amplitude = 5)
+# hotspots_single <- list(
+#   list(centre = c(2000, 2000), sigma = 500, amplitude = 5),
+#   list(centre = c(8000, 8000), sigma = 500, amplitude = 5),
+#   list(centre = c(2000, 8000), sigma = 500, amplitude = 5)
+# )
+
+my_hotspots <- list(
+  list(centre = c(2500, 2500), sigma = 8000, amplitude = 0.1)
 )
 
 # Create a grid of scenarios to test the 3 bootstrap methods on lines and points
@@ -58,34 +62,53 @@ evaluate_convergence <- function(transect_type, boot_method) {
     region = region, 
     N = true_N, 
     x_space = density_grid_spacing, 
-    hotspots = hotspots_single, 
+    hotspots = my_hotspots, 
     scale_param = scale_parameter, 
     truncation = trunc_dist
   )
-  
-  # Adjust spacing so lines and points have reasonable effort
-  spacing <- if(transect_type == "line") 1000 else 500 
   
   sim_survey <- generate_survey_data(
     region = region, 
     realized_population = sim_truth$population,
     angle = design_angle,            
     transect_type = transect_type,
-    spacing = spacing,
+    spacing = design_spacing,
     truncation = trunc_dist
   )
   
-  # 3. Fit Model & Density Surface
-  fit_obj <- get_fit(
+  # 3. Fit Models (Replacing the old get_fit wrapper)
+  ds_results <- fit_ds_model(
+    dist_data = sim_survey$dist_data,
+    transect_type = transect_type,
+    truncation = trunc_dist
+  )
+  
+  dsm_results <- fit_dsm_model(
     dist_data = sim_survey$dist_data,
     transects = sim_survey$transects,
     region = region,
+    detection_model = ds_results$detection_model,
+    N_hat = ds_results$N_hat,
     transect_type = transect_type,
-    spacing = spacing,
     truncation = trunc_dist,
     x_space = density_grid_spacing, 
     y_space = density_grid_spacing  
   )
+  
+  # analytical_variances <- calculate_variance_estimators(
+  #   obsdata = dsm_results$obsdata,
+  #   segdata = dsm_results$segdata,
+  #   region = region,
+  #   detection_model = ds_results$detection_model,
+  #   dsm_model = dsm_results$dsm,
+  #   dsm_surface = dsm_results$density_surface,
+  #   pred_grid = dsm_results$pred_grid,
+  #   N_hat = ds_results$N_hat,
+  #   sigma_hat = ds_results$sigma_hat,
+  #   transect_type = transect_type,
+  #   spacing = spacing,
+  #   truncation = trunc_dist
+  # )
   
   # 4. Dynamically select and run the correct bootstrap function
   boot_func <- switch(boot_method,
@@ -94,14 +117,15 @@ evaluate_convergence <- function(transect_type, boot_method) {
                       "Discrete" = get_bootstrap_disc_density
   )
   
+  # Pass the targeted outputs from the new split functions
   boot_res <- boot_func(
     region = region,
-    population_description = fit_obj$population_description,
-    sigma_hat = fit_obj$sigma_hat,
+    population_description = dsm_results$population_description,
+    sigma_hat = ds_results$sigma_hat,
     transect_type = transect_type,
     reps = MAX_BOOT_REPS,
     angle = design_angle,
-    spacing = spacing,
+    spacing = design_spacing,
     truncation = trunc_dist
   )
   
