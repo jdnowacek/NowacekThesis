@@ -372,9 +372,20 @@ fit_dsm_model <- function(dist_data,
   
   predictions <- predict(dsm1, newdata = pred_data, off.set = pred_grid$area, type = "response")
   
+  # pred_grid <- pred_grid |> 
+  #   mutate(N_hat_pred = as.numeric(predictions),
+  #          density = pmax(N_hat_pred / area, .Machine$double.eps))
+  
   pred_grid <- pred_grid |> 
-    mutate(N_hat_pred = as.numeric(predictions),
-           density = pmax(N_hat_pred / area, .Machine$double.eps))
+    mutate(
+      N_hat_pred = as.numeric(predictions),
+      N_hat_pred = replace_na(N_hat_pred, 0),
+      # prevents N_hat_pred / 0 from creating NaNs
+      density = if_else(area > 0, N_hat_pred / area, 0), 
+      density = pmax(density, .Machine$double.eps),
+      # final barrier to catch stray NAs so they don't break the bootstrap prob vectors
+      density = if_else(is.na(density) | is.nan(density), .Machine$double.eps, density) 
+    )
   
   
   
@@ -406,8 +417,18 @@ fit_dsm_model <- function(dist_data,
         area = sum(area, na.rm = TRUE),
         geometry = sf::st_union(geometry),
         .groups = "drop"
+      ) |>
+      
+      # mutate(density = pmax(N_hat_pred / area, .Machine$double.eps), y = 0) |> 
+      # select(strata, density, x, y, N_hat_pred, area, geometry)
+    
+      mutate(
+        # Same safe division applied to lines
+        density = if_else(area > 0, N_hat_pred / area, 0),
+        density = pmax(density, .Machine$double.eps),
+        density = if_else(is.na(density) | is.nan(density), .Machine$double.eps, density),
+        y = 0
       ) |> 
-      mutate(density = pmax(N_hat_pred / area, .Machine$double.eps), y = 0) |> 
       select(strata, density, x, y, N_hat_pred, area, geometry)
     
   } else {
@@ -697,6 +718,10 @@ calculate_variance_estimators <- function(obsdata,
     pred_data <- sf::st_drop_geometry(boxlets_sf)
     pred_N <- predict(dsm1, newdata = pred_data, off.set = pred_data$area, type = "response")
     p_j <- pred_N / sum(pred_N, na.rm = TRUE)
+    
+    # prevents NA
+    p_j[is.na(p_j)] <- 0 
+    p_j[p_j < 0] <- 0 
     
     # Safely compute Average Detection Probability (P_a)
     fitted_probs <- m1$ddf$fitted

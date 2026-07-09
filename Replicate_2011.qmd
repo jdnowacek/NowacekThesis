@@ -1,0 +1,388 @@
+---
+title: "Replicate_2011"
+format: html
+---
+
+# Packages
+
+```{r}
+library(tidyverse)
+library(dsims)
+library(Distance)
+library(dssd)
+library(dsm)
+library(sf)
+library(mgcv)
+library(qrng) 
+```
+
+# Import Functions
+
+```{r}
+source(here::here("Functions2.R"))
+```
+
+# Constants
+
+```{r}
+true_N <- 1000
+
+points_or_lines = "line"
+
+trunc_dist <- 300
+scale_parameter <- 100
+design_spacing <- 50
+
+density_grid_spacing <- 50
+
+design_angle <- 0
+bootstrap_reps <- 250
+
+outer_loop_reps <- 100
+```
+
+# Code
+
+## Region
+
+```{r}
+# region <- make_region(region_sf = NULL, 0, 5000, 0, 5000, "m")
+# plot(region, main = "Survey Region")
+```
+
+# Replicating Fewster Triangle regions
+
+```{r}
+# Define a right triangle with 1000m axes
+triangle_coords <- matrix(c(
+  1000, 1000, 
+  1000, 0, 
+  0, 0, 
+  1000, 1000       
+), ncol = 2, byrow = TRUE)
+
+region <- st_polygon(list(triangle_coords)) |> 
+  st_sfc() |> 
+  st_sf(geometry = _)
+
+region <- make_region(region_sf = region)
+
+plot(region)
+```
+
+## Density
+
+```{r}
+# my_hotspots <- list(
+#   list(centre = c(2000, 8000), sigma = 800, amplitude = 1.2),
+#   list(centre = c(5000, 2000), sigma = 6000, amplitude = 0.5),
+#   list(centre = c(8000, 9000), sigma = 1000, amplitude = 2)
+# )
+
+my_hotspots1 <- list(
+  list(centre = c(500, 500), sigma = 8000, amplitude = 1)
+)
+
+density_true1 <- make_hotspot_density(region, my_hotspots1)
+
+
+
+my_hotspots2 <- list(
+  list(centre = c(0, 0), sigma = 1000, amplitude = 1)
+)
+
+density_true2 <- make_hotspot_density(region, my_hotspots2)
+
+
+
+my_hotspots3 <- list(
+  list(centre = c(1000, 0), sigma = 400, amplitude = 1),
+  list(centre = c(1000, 250), sigma = 400, amplitude = 1),
+  list(centre = c(1000, 500), sigma = 400, amplitude = 1),
+  list(centre = c(1000, 750), sigma = 400, amplitude = 1),
+  list(centre = c(1000, 1000), sigma = 400, amplitude = 1)
+)
+
+density_true3 <- make_hotspot_density(region, my_hotspots3)
+
+
+
+my_hotspots4 <- list(
+  list(centre = c(1000, 0), sigma = 1000, amplitude = 1)
+)
+
+density_true4 <- make_hotspot_density(region, my_hotspots4)
+
+densities <- c(density_true1, density_true2, density_true3, density_true4)
+```
+
+```{r}
+ggplot() +
+  # Assuming the first list element contains the sf density grid
+  geom_sf(data = density_true4@density.surface[[1]], aes(fill = density), color = NA) +
+  scale_fill_viridis_c() +
+  geom_sf(data = region@region, fill = NA, color = "black", size = 1) +
+  theme_minimal()
+```
+
+
+## For each region:
+
+simulated population, survey, ds() fit
+
+```{r}
+library(tidyverse)
+library(furrr)
+library(future)
+
+# 1. Setup Parallel Backend
+# Reserve 2 cores for your OS so your machine doesn't freeze
+num_cores <- max(1, parallel::detectCores() - 2)
+plan(multisession, workers = num_cores)
+
+# Simulation Setup 
+num_scenarios <- length(densities)
+
+# Helper function to safely extract variances
+safe_extract <- function(lst, name) {
+  if (name %in% names(lst) && !is.null(lst[[name]])) lst[[name]] else NA
+}
+
+message(sprintf("Starting parallel simulation across %d workers...", num_cores))
+
+# 2. Execute Parallel Nested Loops using furrr and purrr
+all_runs <- future_map(1:outer_loop_reps, function(b) {
+  
+  # Inner loop converted to purrr::map
+  inner_results <- map(seq_along(densities), function(i) {
+    
+    # Generate Population
+    sim_pop <- generate_simulated_pop(
+      region = region,
+      density_true = densities[[i]]
+    )
+    
+    # Conduct Survey
+    survey_data <- generate_survey_data(
+      region = region,
+      realized_population = sim_pop$population,
+      transect_type = points_or_lines,
+      spacing = design_spacing,
+      truncation = trunc_dist
+    )
+    
+    # Fit Models
+    ds_results <- fit_ds_model(
+      dist_data = survey_data$dist_data,
+      transect_type = points_or_lines,
+      truncation = trunc_dist
+    )
+    
+    dsm_results <- fit_dsm_model(
+      dist_data = survey_data$dist_data,
+      transects = survey_data$transects,
+      region = region,
+      ds_model = ds_results$ds_model,
+      N_hat = ds_results$N_hat,
+      transect_type = points_or_lines,
+      truncation = trunc_dist,
+      x_space = density_grid_spacing,
+      y_space = density_grid_spacing
+    )
+    
+    # Analytical Variances
+    analytical_vars <- calculate_variance_estimators(
+      obsdata = dsm_results$obsdata,
+      segdata = dsm_results$segdata,
+      region = region,
+      ds_model = ds_results$ds_model,
+      dsm_model = dsm_results$dsm,
+      dsm_surface = dsm_results$density_surface,
+      pred_grid = dsm_results$pred_grid,
+      N_hat = ds_results$N_hat,
+      sigma_hat = ds_results$sigma_hat,
+      transect_type = points_or_lines,
+      spacing = design_spacing,
+      truncation = trunc_dist
+    )
+    
+    # Bootstraps
+    standard <- get_bootstrap(
+      region = region,
+      population_description = dsm_results$population_description,
+      sigma_hat = ds_results$sigma_hat,
+      transect_type = points_or_lines,
+      reps = bootstrap_reps,
+      angle = design_angle,
+      spacing = design_spacing,
+      truncation = trunc_dist
+    )
+    
+    disc_density <- get_bootstrap_disc_density(
+      region = region,
+      population_description = dsm_results$population_description,
+      sigma_hat = ds_results$sigma_hat,
+      transect_type = points_or_lines,
+      reps = bootstrap_reps,
+      angle = design_angle,
+      spacing = design_spacing,
+      truncation = trunc_dist
+    )
+    
+    # Store summary data row
+    res_row <- tibble(
+      iteration = b,
+      scenario = paste("Scenario", i),
+      N_hat = ds_results$N_hat,
+      se_R2 = safe_extract(analytical_vars, "se_N_R2"),
+      se_R3 = safe_extract(analytical_vars, "se_N_R3"),
+      se_S2 = safe_extract(analytical_vars, "se_N_S2"),
+      se_O1 = safe_extract(analytical_vars, "se_N_O1"),
+      se_O2 = safe_extract(analytical_vars, "se_N_O2"),
+      se_striplet = safe_extract(analytical_vars, "se_N_striplet"),
+      se_boxlet = safe_extract(analytical_vars, "se_N_boxlet"),
+      se_boot_std = sd(standard$N_hat, na.rm = TRUE),
+      se_boot_disc = sd(disc_density$N_hat, na.rm = TRUE)
+    )
+    
+    # Return a list payload containing both the row and the raw arrays
+    # Only populate bootstraps if it's the exact loop matching outer_loop_reps
+    list(
+      row = res_row,
+      bootstraps = if (b == outer_loop_reps) list(Standard = standard$N_hat, Discrete = disc_density$N_hat) else NULL
+    )
+    
+  }) # End of purrr::map
+  
+  # Combine the outputs for this specific 'b' iteration
+  list(
+    summary = map_dfr(inner_results, "row"),
+    bootstraps = map(inner_results, "bootstraps")
+  )
+  
+}, .options = furrr_options(seed = TRUE)) # CRITICAL: Sets up proper parallel random number generation
+
+# 3. Recombine EVERYTHING globally using purrr extraction
+sim_results <- map_dfr(all_runs, "summary")
+
+# Extract the plotting array from the final iteration index
+last_rep_bootstraps <- all_runs[[outer_loop_reps]]$bootstraps
+
+# 4. View summary of results across iterations
+sim_summary <- sim_results |> 
+  group_by(scenario) |> 
+  summarize(
+    mean_N_hat = mean(N_hat, na.rm = TRUE),
+    true_SE = sd(N_hat, na.rm = TRUE), 
+    mean_se_striplet = mean(se_striplet, na.rm = TRUE),
+    mean_se_boot_std = mean(se_boot_std, na.rm = TRUE),
+    mean_se_boot_disc = mean(se_boot_disc, na.rm = TRUE)
+  )
+
+print(sim_summary)
+
+# Safely close workers
+plan(sequential)
+```
+
+```{r}
+# Plotting Monte Carlo convergence 
+
+# Custom function to calculate cumulative SD
+cum_sd <- function(x) {
+  # Start from 2 because you can't get an SD of a single number
+  sapply(2:length(x), function(j) sd(x[1:j], na.rm = TRUE))
+}
+
+# Build plot data dynamically by looping through the saved list of the last iteration
+plot_data <- bind_rows(lapply(1:num_scenarios, function(i) {
+  
+  boot_std <- last_rep_bootstraps[[i]]$Standard
+  boot_disc <- last_rep_bootstraps[[i]]$Discrete
+  
+  tibble(
+    replicate = 2:bootstrap_reps,
+    Scenario = paste("Scenario", i),
+    Standard = cum_sd(boot_std),
+    Discrete = cum_sd(boot_disc)
+  ) |> 
+    pivot_longer(
+      cols = c(Standard, Discrete), 
+      names_to = "Method", 
+      values_to = "Running_SD"
+    )
+}))
+
+# Generate the facet plot
+ggplot(plot_data, aes(x = replicate, y = Running_SD, color = Method)) +
+  geom_line(alpha = 0.8, linewidth = 1) +
+  facet_wrap(~Scenario, scales = "free_y") + # 'free_y' allows each density to have its own y-axis scale
+  scale_color_manual(values = c("Standard" = "blue", "Discrete" = "red")) +
+  labs(
+    title = "Bootstrap Convergence (Running SD)",
+    subtitle = paste("Recorded from outer loop iteration", outer_loop_reps),
+    x = "Bootstrap Replicate",
+    y = "Cumulative Standard Deviation (SE of N_hat)",
+    color = "Bootstrap Method"
+  ) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+
+```{r}
+sim_summary <- sim_results |> 
+  group_by(scenario) |> 
+  summarize(
+    mean_N_hat = mean(N_hat, na.rm = TRUE),
+    true_SE = sd(N_hat, na.rm = TRUE), 
+    mean_se_R2 = mean(se_R2, na.rm = TRUE),
+    mean_se_R3 = mean(se_R3, na.rm = TRUE),
+    mean_se_S2 = mean(se_S2, na.rm = TRUE),
+    mean_se_O1 = mean(se_O1, na.rm = TRUE),
+    mean_se_O2 = mean(se_, na.rm = TRUE),
+    mean_se_striplet = mean(se_striplet, na.rm = TRUE),
+    mean_se_boot_std = mean(se_boot_std, na.rm = TRUE),
+    mean_se_boot_disc = mean(se_boot_disc, na.rm = TRUE)
+  )
+
+print(sim_summary)
+```
+
+
+```{r}
+
+desired_order <- c("se_R2", "se_R3", "se_S2", "se_O1", "se_O2", "se_striplet", "se_boot_std", "se_boot_disc")
+
+
+plot_dat <- sim_results |>
+  group_by(scenario) |>
+  pivot_longer(cols = c(se_R2, se_R3, se_S2, se_O1, se_O2, se_striplet, se_boot_std, se_boot_disc)) |>
+  select(-se_boxlet) |>
+  mutate(name = factor(name, levels = desired_order))
+
+plot_dat |>
+  ggplot(aes(x = name, y = value)) +
+  geom_boxplot() +
+  facet_grid(rows = vars(scenario))
+```
+
+
+```{r}
+saveRDS(sim_results, file = "100_outer_250_inner")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

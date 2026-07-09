@@ -68,7 +68,8 @@ density_true <- make_hotspot_density(region, my_hotspots)
 ## True population
 
 ```{r}
-sim_pop <- generate_simulated_pop(region)
+sim_pop <- generate_simulated_pop(region,
+                                  density_true)
 
 # FIX: Map these to the exact names exported by the list in get_simulated_pop()
 density <- sim_pop$density
@@ -110,7 +111,7 @@ dsm_results <- fit_dsm_model(
   dist_data = survey_data_lines$dist_data,
   transects = survey_data_lines$transects,
   region = region,
-  detection_model = ds_results$detection_model,
+  ds_model = ds_results$ds_model,
   N_hat = ds_results$N_hat,
   transect_type = points_or_lines,
   truncation = trunc_dist,
@@ -126,7 +127,7 @@ analytical_vars <- calculate_variance_estimators(
   obsdata = dsm_results$obsdata,
   segdata = dsm_results$segdata,
   region = region,
-  detection_model = ds_results$detection_model,
+  ds_model = ds_results$ds_model,
   dsm_model = dsm_results$dsm,
   dsm_surface = dsm_results$density_surface,
   pred_grid = dsm_results$pred_grid,
