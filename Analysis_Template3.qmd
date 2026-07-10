@@ -1,5 +1,5 @@
 ---
-title: "Analysis Template 2"
+title: "Analysis Template 3"
 format: html
 ---
 
@@ -21,7 +21,7 @@ library(qrng)
 # Import Functions
 
 ```{r}
-source(here::here("Functions2.R"))
+source(here::here("Functions3.R"))
 ```
 
 # Constants
@@ -29,7 +29,7 @@ source(here::here("Functions2.R"))
 ```{r}
 true_N <- 10000
 
-points_or_lines = "point"
+points_or_lines = "line"
 
 trunc_dist <- 30
 scale_parameter <- 15
@@ -83,7 +83,7 @@ detectability <- sim_pop$detectability
 generates the iteration of survey data analogous to real data collection
 
 ```{r}
-survey_data_lines <- generate_survey_data(
+survey_data_lines <- survey_data(
   region = region,
   realized_population = sim_pop$population,
   transect_type = points_or_lines
@@ -92,13 +92,19 @@ survey_data_lines <- generate_survey_data(
 design <- survey_data_lines$design
 transects <- survey_data_lines$transects
 samplers <- transects@samplers
+dist_data <- survey_data_lines$dist_data
+obs_data <- survey_data_lines$obsdata
+seg_data <- survey_data_lines$segdata
 ```
 
 ## ds() Fit 
 
 ```{r}
-ds_results <- fit_ds_model(
+ds_results <- fit_ds(
+  region = region,
   dist_data = survey_data_lines$dist_data,
+  obsdata = obs_data,
+  segdata = seg_data,
   transect_type = points_or_lines,
   truncation = trunc_dist
 )
@@ -107,59 +113,42 @@ ds_results <- fit_ds_model(
 ## dsm() models
 
 ```{r}
-dsm_results <- fit_dsm_model(
-  dist_data = survey_data_lines$dist_data,
-  transects = survey_data_lines$transects,
-  region = region,
+dsm_results <- fit_dsm_and_surface(
+  obsdata = obs_data,
+  segdata = seg_data,
   ds_model = ds_results$ds_model,
+  region = region,
   N_hat = ds_results$N_hat,
   transect_type = points_or_lines,
-  truncation = trunc_dist,
   x_space = density_grid_spacing,
   y_space = density_grid_spacing
 )
 ```
 
-## Variance estimators
+## Striplet/Boxlet
 
 ```{r}
-analytical_vars <- calculate_variance_estimators(
-  obsdata = dsm_results$obsdata,
-  segdata = dsm_results$segdata,
-  region = region,
-  ds_model = ds_results$ds_model,
-  dsm_model = dsm_results$dsm,
-  dsm_surface = dsm_results$density_surface,
-  pred_grid = dsm_results$pred_grid,
-  N_hat = ds_results$N_hat,
-  sigma_hat = ds_results$sigma_hat,
-  transect_type = points_or_lines,
-  spacing = design_spacing,
-  truncation = trunc_dist
-)
-
-# Re-mapping extracted variables for potential downstream code
-obs_data <- dsm_results$obsdata
-seg_data <- dsm_results$segdata
-dsm1 <- dsm_results$dsm
-density_surface <- dsm_results$density_surface
-
-# Check analytical variance outout
-print(analytical_vars)
+striplet_boxlet <- striplet_boxlet(region = region,
+                                   segdata = seg_data,
+                                   dsm_model = dsm_results$dsm_model,
+                                   dsm_surface = dsm_results$dsm_surface,
+                                   ds_results = ds_results,
+                                   transect_type = points_or_lines,
+                                   spacing = design_spacing,
+                                   truncation = trunc_dist)
 ```
 
 ## Bootstraps
 
 ```{r}
-standard <- get_bootstrap(
-  region = region,
-  population_description = dsm_results$population_description,
-  sigma_hat = ds_results$sigma_hat,
-  transect_type = points_or_lines,
-  reps = bootstrap_reps,
-  angle = design_angle,
-  spacing = design_spacing,
-  truncation = trunc_dist
+standard <- get_bootstrap(region = region,
+                          population_description = dsm_results$population_description,
+                          sigma_hat = ds_results$sigma_hat,
+                          transect_type = points_or_lines,
+                          reps = bootstrap_reps,
+                          angle = design_angle,
+                          spacing = design_spacing,
+                          truncation = trunc_dist
 )
 
 sd(standard$N_hat, na.rm = TRUE)

@@ -405,7 +405,6 @@ fit_ds <- function(region,
     # )
     # 
     # se_P3 <- p3$dht$individuals$N$se
-    # Note: Evaluated point variances manually below as 'p2' and 'p3' are commented out.
     
     nvec <- effort_data$count
     tvec <- effort_data$Effort
@@ -456,13 +455,14 @@ fit_dsm_and_surface <- function(obsdata,
                                 segdata, 
                                 ds_model, 
                                 region, 
+                                N_hat,
                                 transect_type = points_or_lines, 
                                 x_space = density_grid_spacing, 
                                 y_space = density_grid_spacing) {
   
   if (nrow(obsdata) == 0) return(NULL)
   
-  # Fit DSM based on geometry
+  # 1. Fit DSM based on geometry
   if (transect_type == "line") {
     dsm1 <- dsm(count ~ s(x), 
                 ddf.obj = ds_model, 
@@ -481,23 +481,74 @@ fit_dsm_and_surface <- function(obsdata,
                 convert.units = 1)
   }
   
-  # Create prediction grid
+  # 2. Create prediction grid
   prediction_grid <- make.density(region = region, x.space = x_space, y.space = y_space, constant = 1)
   pred_grid <- prediction_grid@density.surface[[1]] |> 
     mutate(area = as.numeric(sf::st_area(geometry)))
   
   pred_data <- sf::st_drop_geometry(pred_grid)
   
-  # Predict the surface
-  pred_grid$N_hat_pred <- predict(dsm1, newdata = pred_data, off.set = pred_grid$area, type = "response")
+  # 3. Predict the surface and apply SAFE calculations
+  predictions <- predict(dsm1, newdata = pred_data, off.set = pred_grid$area, type = "response")
   
-  dsm_surface <- pred_grid |> 
-    mutate(density = pmax(N_hat_pred / area, .Machine$double.eps)) |> 
-    select(strata, density, x, y, geometry, N_hat_pred, area)
+  pred_grid <- pred_grid |> 
+    mutate(
+      N_hat_pred = as.numeric(predictions),
+      N_hat_pred = replace_na(N_hat_pred, 0),
+      # prevents N_hat_pred / 0 from creating NaNs
+      density = if_else(area > 0, N_hat_pred / area, 0), 
+      density = pmax(density, .Machine$double.eps),
+      # final barrier to catch stray NAs so they don't break the bootstrap prob vectors
+      density = if_else(is.na(density) | is.nan(density), .Machine$double.eps, density) 
+    )
   
+  # 4. Generate dsims S4 Objects
+  est.density <- make.density(
+    region = region, 
+    x.space = x_space, 
+    y.space = y_space, 
+    density.surface = pred_grid
+  )
+  
+  pop.desc <- make.population.description(
+    region = region, 
+    density = est.density, 
+    N = N_hat,          # Uses the N_hat passed into the function
+    fixed.N = TRUE
+  )
+  
+  # 5. Build the final dsm_surface object (Handling 1D vs 2D shapes)  
+  if (transect_type == "line") {
+    dsm_surface <- pred_grid |> 
+      group_by(strata, x) |> 
+      summarize(
+        N_hat_pred = sum(N_hat_pred, na.rm = TRUE), # sum over transect segments vertically
+        area = sum(area, na.rm = TRUE),
+        geometry = sf::st_union(geometry),
+        .groups = "drop"
+      ) |>
+      mutate(
+        # Same safe division applied to lines after merging geometries
+        density = if_else(area > 0, N_hat_pred / area, 0),
+        density = pmax(density, .Machine$double.eps),
+        density = if_else(is.na(density) | is.nan(density), .Machine$double.eps, density),
+        y = 0
+      ) |> 
+      select(strata, density, x, y, N_hat_pred, area, geometry)
+    
+  } else {
+    dsm_surface <- pred_grid |> 
+      select(strata, density, x, y, N_hat_pred, area, geometry)
+  }
+  
+  # 6. Return comprehensive list needed for downstream simulation
   list(
-    dsm_model = dsm1,
-    dsm_surface = dsm_surface,
+    dsm = dsm1,
+    obsdata = obsdata, 
+    segdata = segdata,
+    density_surface = dsm_surface,
+    density = est.density,
+    population_description = pop.desc,
     pred_grid = pred_grid
   )
 }
@@ -567,7 +618,10 @@ striplet_boxlet <- function(region,
       Abvec[b_idx] <- sum(muvec * g_b, na.rm = TRUE)
     }
     
-    var_ER_striplet <- mean((Abvec + (Abvec^2) * (1 - 1/musum)) / (Lbvec^2)) - (mean(Abvec / Lbvec))^2
+    # var_ER_striplet <- mean((Abvec + (Abvec^2) * (1 - 1/musum)) / (Lbvec^2)) - (mean(Abvec / Lbvec))^2
+    # erhat_striplet <- mean(Abvec / Lbvec, na.rm = TRUE)
+    
+    var_ER_striplet <- mean((Abvec + (Abvec^2) * (1 - 1/musum)) / (Lbvec^2), na.rm = TRUE) - (mean(Abvec / Lbvec, na.rm = TRUE))^2
     erhat_striplet <- mean(Abvec / Lbvec, na.rm = TRUE)
     
     delta_striplet <- apply_delta(var_ER_striplet, erhat_striplet)
@@ -657,7 +711,7 @@ striplet_boxlet <- function(region,
 
 
 
-## uses the population from fit_ds_model, sigma hat from the ds() model,
+## uses the population from fit_ds, sigma hat from the ds() model,
 ## and the survey design to generate an estimated N_hat 
 ## Run this multiple times to estimate a SE by bootstraps
 

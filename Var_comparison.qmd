@@ -70,13 +70,13 @@ source(here::here("Functions3.R"))
 ```{r}
 true_N <- 1000
 
-points_or_lines = "point"
+points_or_lines = "line"
 
 trunc_dist <- 300
 scale_parameter <- 100
 design_spacing <- 500
 
-density_grid_spacing <- 500
+density_grid_spacing <- 100
 
 design_angle <- 0
 ```
@@ -138,7 +138,7 @@ test_design <- test_survey_data_lines$design
 
 test_analyses <- make.ds.analysis(dfmodel = ~ 1,
                              key = "hn",
-                             truncation = 750,
+                             truncation = trunc_dist,
                              criteria = "AIC")
 
 test_sim <- make.simulation(reps = 3,
@@ -201,50 +201,22 @@ results <- future_map_dfr(1:outer_loop_reps, function(i) {
     truncation = trunc_dist
   )
   
+  N_hat <- ds_results$N_hat
+  
   ## 4. Fit density surface model
   dsm_results <- fit_dsm_and_surface(
     obsdata = survey_data_lines$obsdata,
     segdata = survey_data_lines$segdata,
     ds_model = ds_results$ds_model,
     region = region,
+    N_hat = ds_results$N_hat,
     transect_type = points_or_lines,
     x_space = density_grid_spacing,
     y_space = density_grid_spacing
   )
   
-  # Failsafe in case nothing is observed and the DSM is NULL
-  # FIXED: Added missing P2, P3, and boxlet columns to prevent summarise() crash
-  if (is.null(dsm_results)) {
-    return(tibble(
-      rep = i,
-      N_hat = ds_results$N_hat,
-      se_ds_base = NA_real_,
-      se_R2 = NA_real_, se_R3 = NA_real_,
-      se_S1 = NA_real_, se_S2 = NA_real_,
-      se_O1 = NA_real_, se_O2 = NA_real_,
-      se_P2 = NA_real_, se_P3 = NA_real_, 
-      se_striplet = NA_real_, se_boxlet = NA_real_,
-      se_bootstrap = NA_real_,
-      se_bootstrap_disc = NA_real_
-    ))
-  }
-  
-  ## 4.5 Build estimated population description for bootstraps
-  # FIXED: Used dsm_surface which actually contains the calculated density column
-  est_density <- make.density(
-    region = region,
-    x.space = density_grid_spacing,
-    density.surface = dsm_results$dsm_surface 
-  )
-  
-  pop_desc_est <- make.population.description(
-    region = region,
-    density = est_density,
-    N = ds_results$N_hat,
-    fixed.N = TRUE
-  )
-  
-  ## 5. Calculate analytical variances
+
+## 5. Calculate analytical variances
   spatial_variances <- striplet_boxlet(
     region = region,
     segdata = survey_data_lines$segdata,
@@ -256,17 +228,17 @@ results <- future_map_dfr(1:outer_loop_reps, function(i) {
     truncation = trunc_dist
   )
   
-  # Extract analytical standard errors conditionally based on line or point 
+  # Extract analytical standard errors safely using %||%
   if (points_or_lines == "line") {
-    R2_est <- ds_results$analytical_variances$se_N_R2
-    R3_est <- ds_results$analytical_variances$se_N_R3
-    S1_est <- ds_results$analytical_variances$se_N_S1
-    S2_est <- ds_results$analytical_variances$se_N_S2
-    O1_est <- ds_results$analytical_variances$se_N_O1
-    O2_est <- ds_results$analytical_variances$se_N_O2
+    R2_est <- ds_results$analytical_variances$se_N_R2 %||% NA_real_
+    R3_est <- ds_results$analytical_variances$se_N_R3 %||% NA_real_
+    S1_est <- ds_results$analytical_variances$se_N_S1 %||% NA_real_
+    S2_est <- ds_results$analytical_variances$se_N_S2 %||% NA_real_
+    O1_est <- ds_results$analytical_variances$se_N_O1 %||% NA_real_
+    O2_est <- ds_results$analytical_variances$se_N_O2 %||% NA_real_
     P2_est <- NA_real_
     P3_est <- NA_real_
-    striplet_est <- spatial_variances$se_N_striplet
+    striplet_est <- spatial_variances$se_N_striplet %||% NA_real_
     boxlet_est <- NA_real_
   } else {
     R2_est <- NA_real_
@@ -275,17 +247,16 @@ results <- future_map_dfr(1:outer_loop_reps, function(i) {
     S2_est <- NA_real_
     O1_est <- NA_real_
     O2_est <- NA_real_
-    # FIXED: Was mapping to se_N_S1 erroneously
-    P2_est <- ds_results$analytical_variances$se_N_P2 
-    P3_est <- ds_results$analytical_variances$se_N_P3
+    P2_est <- ds_results$analytical_variances$se_N_P2 %||% NA_real_
+    P3_est <- ds_results$analytical_variances$se_N_P3 %||% NA_real_
     striplet_est <- NA_real_
-    boxlet_est <- spatial_variances$se_N_boxlet
+    boxlet_est <- spatial_variances$se_N_boxlet %||% NA_real_
   }
   
   ## 6. Run standard bootstrap estimator
   bootstraps <- get_bootstrap(
     region = region,
-    population_description = pop_desc_est,
+    population_description = dsm_results$population_description,
     sigma_hat = ds_results$sigma_hat,
     transect_type = points_or_lines,
     reps = bootstrap_reps
@@ -296,7 +267,7 @@ results <- future_map_dfr(1:outer_loop_reps, function(i) {
   ## 7. Run discrete density bootstrap estimator
   bootstraps_disc <- get_bootstrap_disc_density(
     region = region,
-    population_description = pop_desc_est,
+    population_description = dsm_results$population_description,
     sigma_hat = ds_results$sigma_hat,
     transect_type = points_or_lines,
     reps = bootstrap_reps
@@ -305,11 +276,10 @@ results <- future_map_dfr(1:outer_loop_reps, function(i) {
   bootstrap_disc_est <- sd(bootstraps_disc$N_hat, na.rm = TRUE)
   
   ## 8. Return a tibble/data.frame of this iteration's results
-  # FIXED: Included all point/boxlet columns so the summarise chunk can find them
+  ## (Removed the 'results <-' assignment to safely return directly to future_map_dfr)
   tibble(
     rep                 = i,
-    N_hat               = ds_results$N_hat,
-    se_ds_base          = ds_results$se_ds, # Maps to the un-commented se_ds in Functions3
+    N_hat               = ds_results$N_hat %||% NA_real_,
     se_R2               = R2_est,
     se_R3               = R3_est,
     se_S1               = S1_est,
@@ -345,4 +315,7 @@ results |>
   kable(digits = 3)
 ```
 
+
 Inflated striplet estimator variance, seems to be a product of the shifting density grid overlapping with values from shifting transects (500 and 750 will line up at 1500, 3000, etc) Improves when using a non-round value for design spacing.
+
+
