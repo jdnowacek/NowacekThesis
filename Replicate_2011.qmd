@@ -14,6 +14,8 @@ library(dsm)
 library(sf)
 library(mgcv)
 library(qrng) 
+library(furrr)
+library(future)
 ```
 
 # Import Functions
@@ -25,18 +27,18 @@ source(here::here("Functions2.R"))
 # Constants
 
 ```{r}
-true_N <- 1000
+true_N <- 10000
 
 points_or_lines = "line"
 
-trunc_dist <- 300
-scale_parameter <- 100
-design_spacing <- 50
+trunc_dist <- 30
+scale_parameter <- 15
+design_spacing <- 500
 
-density_grid_spacing <- 50
+density_grid_spacing <- 100
 
 design_angle <- 0
-bootstrap_reps <- 250
+bootstrap_reps <- 200
 
 outer_loop_reps <- 100
 ```
@@ -55,10 +57,10 @@ outer_loop_reps <- 100
 ```{r}
 # Define a right triangle with 1000m axes
 triangle_coords <- matrix(c(
-  1000, 1000, 
-  1000, 0, 
+  10000, 10000, 
+  10000, 0, 
   0, 0, 
-  1000, 1000       
+  10000, 10000       
 ), ncol = 2, byrow = TRUE)
 
 region <- st_polygon(list(triangle_coords)) |> 
@@ -80,7 +82,7 @@ plot(region)
 # )
 
 my_hotspots1 <- list(
-  list(centre = c(500, 500), sigma = 8000, amplitude = 1)
+  list(centre = c(5000, 5000), sigma = 80000, amplitude = 1)
 )
 
 density_true1 <- make_hotspot_density(region, my_hotspots1)
@@ -88,7 +90,7 @@ density_true1 <- make_hotspot_density(region, my_hotspots1)
 
 
 my_hotspots2 <- list(
-  list(centre = c(0, 0), sigma = 1000, amplitude = 1)
+  list(centre = c(0, 0), sigma = 10000, amplitude = 1)
 )
 
 density_true2 <- make_hotspot_density(region, my_hotspots2)
@@ -96,11 +98,11 @@ density_true2 <- make_hotspot_density(region, my_hotspots2)
 
 
 my_hotspots3 <- list(
-  list(centre = c(1000, 0), sigma = 400, amplitude = 1),
-  list(centre = c(1000, 250), sigma = 400, amplitude = 1),
-  list(centre = c(1000, 500), sigma = 400, amplitude = 1),
-  list(centre = c(1000, 750), sigma = 400, amplitude = 1),
-  list(centre = c(1000, 1000), sigma = 400, amplitude = 1)
+  list(centre = c(10000, 0), sigma = 4000, amplitude = 1),
+  list(centre = c(10000, 2500), sigma = 4000, amplitude = 1),
+  list(centre = c(10000, 5000), sigma = 4000, amplitude = 1),
+  list(centre = c(10000, 7500), sigma = 4000, amplitude = 1),
+  list(centre = c(10000, 10000), sigma = 4000, amplitude = 1)
 )
 
 density_true3 <- make_hotspot_density(region, my_hotspots3)
@@ -108,12 +110,12 @@ density_true3 <- make_hotspot_density(region, my_hotspots3)
 
 
 my_hotspots4 <- list(
-  list(centre = c(1000, 0), sigma = 1000, amplitude = 1)
+  list(centre = c(10000, 0), sigma = 10000, amplitude = 1)
 )
 
 density_true4 <- make_hotspot_density(region, my_hotspots4)
 
-densities <- c(density_true1, density_true2, density_true3, density_true4)
+densities <- list(density_true1, density_true2, density_true3, density_true4)
 ```
 
 ```{r}
@@ -131,12 +133,6 @@ ggplot() +
 simulated population, survey, ds() fit
 
 ```{r}
-library(tidyverse)
-library(furrr)
-library(future)
-
-# 1. Setup Parallel Backend
-# Reserve 2 cores for your OS so your machine doesn't freeze
 num_cores <- max(1, parallel::detectCores() - 2)
 plan(multisession, workers = num_cores)
 
@@ -339,7 +335,7 @@ sim_summary <- sim_results |>
     mean_se_R3 = mean(se_R3, na.rm = TRUE),
     mean_se_S2 = mean(se_S2, na.rm = TRUE),
     mean_se_O1 = mean(se_O1, na.rm = TRUE),
-    mean_se_O2 = mean(se_, na.rm = TRUE),
+    mean_se_O2 = mean(se_O2, na.rm = TRUE),
     mean_se_striplet = mean(se_striplet, na.rm = TRUE),
     mean_se_boot_std = mean(se_boot_std, na.rm = TRUE),
     mean_se_boot_disc = mean(se_boot_disc, na.rm = TRUE)
@@ -351,19 +347,20 @@ print(sim_summary)
 
 ```{r}
 
-desired_order <- c("se_R2", "se_R3", "se_S2", "se_O1", "se_O2", "se_striplet", "se_boot_std", "se_boot_disc")
+desired_order <- c("true_SE", "se_R2", "se_R3", "se_S2", "se_O1", "se_O2", "se_striplet", "se_boot_std", "se_boot_disc")
 
 
 plot_dat <- sim_results |>
   group_by(scenario) |>
-  pivot_longer(cols = c(se_R2, se_R3, se_S2, se_O1, se_O2, se_striplet, se_boot_std, se_boot_disc)) |>
+  pivot_longer(cols = c(true_SE, se_R2, se_R3, se_S2, se_O1, se_O2, se_striplet, se_boot_std, se_boot_disc)) |>
   select(-se_boxlet) |>
   mutate(name = factor(name, levels = desired_order))
 
 plot_dat |>
   ggplot(aes(x = name, y = value)) +
   geom_boxplot() +
-  facet_grid(rows = vars(scenario))
+  facet_grid(rows = vars(scenario)) +
+  theme_bw()
 ```
 
 

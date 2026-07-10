@@ -27,15 +27,15 @@ source(here::here("Functions2.R"))
 # Constants
 
 ```{r}
-true_N <- 1000
+true_N <- 10000
 
 points_or_lines = "point"
 
-trunc_dist <- 300
-scale_parameter <- 100
+trunc_dist <- 30
+scale_parameter <- 15
 design_spacing <- 500
 
-density_grid_spacing <- 500
+density_grid_spacing <- 100
 
 design_angle <- 0
 bootstrap_reps <- 10
