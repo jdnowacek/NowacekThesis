@@ -217,11 +217,22 @@ results <- future_map_dfr(1:outer_loop_reps, function(i) {
   
 
 ## 5. Calculate analytical variances
+  # spatial_variances <- striplet_boxlet(
+  #   region = region,
+  #   segdata = survey_data_lines$segdata,
+  #   dsm_model = dsm_results$dsm_model,
+  #   dsm_surface = dsm_results$dsm_surface,
+  #   ds_results = ds_results,
+  #   transect_type = points_or_lines,
+  #   spacing = design_spacing,
+  #   truncation = trunc_dist
+  # )
+  
   spatial_variances <- striplet_boxlet(
     region = region,
     segdata = survey_data_lines$segdata,
-    dsm_model = dsm_results$dsm_model,
-    dsm_surface = dsm_results$dsm_surface,
+    dsm_model = dsm_results$dsm,
+    dsm_surface = dsm_results$density_surface,
     ds_results = ds_results,
     transect_type = points_or_lines,
     spacing = design_spacing,

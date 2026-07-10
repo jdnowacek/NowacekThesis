@@ -21,7 +21,7 @@ library(future)
 # Import Functions
 
 ```{r}
-source(here::here("Functions2.R"))
+source(here::here("Functions3.R"))
 ```
 
 # Constants
@@ -38,9 +38,9 @@ design_spacing <- 500
 density_grid_spacing <- 100
 
 design_angle <- 0
-bootstrap_reps <- 200
+bootstrap_reps <- 10
 
-outer_loop_reps <- 100
+outer_loop_reps <- 3
 ```
 
 # Code
@@ -130,154 +130,153 @@ ggplot() +
 
 ## For each region:
 
-simulated population, survey, ds() fit
-
 ```{r}
 num_cores <- max(1, parallel::detectCores() - 2)
 plan(multisession, workers = num_cores)
 
-# Simulation Setup 
 num_scenarios <- length(densities)
-
-# Helper function to safely extract variances
-safe_extract <- function(lst, name) {
-  if (name %in% names(lst) && !is.null(lst[[name]])) lst[[name]] else NA
-}
 
 message(sprintf("Starting parallel simulation across %d workers...", num_cores))
 
-# 2. Execute Parallel Nested Loops using furrr and purrr
 all_runs <- future_map(1:outer_loop_reps, function(b) {
-  
-  # Inner loop converted to purrr::map
+
   inner_results <- map(seq_along(densities), function(i) {
-    
-    # Generate Population
+
     sim_pop <- generate_simulated_pop(
       region = region,
       density_true = densities[[i]]
     )
-    
-    # Conduct Survey
-    survey_data <- generate_survey_data(
+
+    survey_results <- survey_data(
       region = region,
       realized_population = sim_pop$population,
-      transect_type = points_or_lines,
-      spacing = design_spacing,
-      truncation = trunc_dist
+      transect_type = points_or_lines
     )
-    
-    # Fit Models
-    ds_results <- fit_ds_model(
-      dist_data = survey_data$dist_data,
-      transect_type = points_or_lines,
-      truncation = trunc_dist
-    )
-    
-    dsm_results <- fit_dsm_model(
-      dist_data = survey_data$dist_data,
-      transects = survey_data$transects,
+
+    ds_results <- fit_ds(
       region = region,
+      dist_data = survey_results$dist_data,
+      obsdata = survey_results$obsdata,
+      segdata = survey_results$segdata,
+      transect_type = points_or_lines,
+      truncation = trunc_dist
+    )
+
+    dsm_results <- fit_dsm_and_surface(
+      obsdata = survey_results$obsdata,
+      segdata = survey_results$segdata,
       ds_model = ds_results$ds_model,
+      region = region,
       N_hat = ds_results$N_hat,
       transect_type = points_or_lines,
-      truncation = trunc_dist,
       x_space = density_grid_spacing,
       y_space = density_grid_spacing
     )
-    
-    # Analytical Variances
-    analytical_vars <- calculate_variance_estimators(
-      obsdata = dsm_results$obsdata,
-      segdata = dsm_results$segdata,
+
+    spatial_variances <- striplet_boxlet(
       region = region,
-      ds_model = ds_results$ds_model,
+      segdata = survey_results$segdata,
       dsm_model = dsm_results$dsm,
       dsm_surface = dsm_results$density_surface,
-      pred_grid = dsm_results$pred_grid,
-      N_hat = ds_results$N_hat,
-      sigma_hat = ds_results$sigma_hat,
+      ds_results = ds_results,
       transect_type = points_or_lines,
       spacing = design_spacing,
       truncation = trunc_dist
     )
-    
-    # Bootstraps
+
+    if (points_or_lines == "line") {
+
+      R2_est <- ds_results$analytical_variances$se_N_R2 %||% NA_real_
+      R3_est <- ds_results$analytical_variances$se_N_R3 %||% NA_real_
+      S1_est <- ds_results$analytical_variances$se_N_S1 %||% NA_real_
+      S2_est <- ds_results$analytical_variances$se_N_S2 %||% NA_real_
+      O1_est <- ds_results$analytical_variances$se_N_O1 %||% NA_real_
+      O2_est <- ds_results$analytical_variances$se_N_O2 %||% NA_real_
+
+      P2_est <- NA_real_
+      P3_est <- NA_real_
+
+      striplet_est <- spatial_variances$se_N_striplet %||% NA_real_
+      boxlet_est <- NA_real_
+
+    } else {
+
+      R2_est <- NA_real_
+      R3_est <- NA_real_
+      S1_est <- NA_real_
+      S2_est <- NA_real_
+      O1_est <- NA_real_
+      O2_est <- NA_real_
+
+      P2_est <- ds_results$analytical_variances$se_N_P2 %||% NA_real_
+      P3_est <- ds_results$analytical_variances$se_N_P3 %||% NA_real_
+
+      striplet_est <- NA_real_
+      boxlet_est <- spatial_variances$se_N_boxlet %||% NA_real_
+    }
+
     standard <- get_bootstrap(
       region = region,
       population_description = dsm_results$population_description,
       sigma_hat = ds_results$sigma_hat,
       transect_type = points_or_lines,
-      reps = bootstrap_reps,
-      angle = design_angle,
-      spacing = design_spacing,
-      truncation = trunc_dist
+      reps = bootstrap_reps
     )
-    
+
     disc_density <- get_bootstrap_disc_density(
       region = region,
       population_description = dsm_results$population_description,
       sigma_hat = ds_results$sigma_hat,
       transect_type = points_or_lines,
-      reps = bootstrap_reps,
-      angle = design_angle,
-      spacing = design_spacing,
-      truncation = trunc_dist
+      reps = bootstrap_reps
     )
-    
-    # Store summary data row
+
     res_row <- tibble(
       iteration = b,
       scenario = paste("Scenario", i),
       N_hat = ds_results$N_hat,
-      se_R2 = safe_extract(analytical_vars, "se_N_R2"),
-      se_R3 = safe_extract(analytical_vars, "se_N_R3"),
-      se_S2 = safe_extract(analytical_vars, "se_N_S2"),
-      se_O1 = safe_extract(analytical_vars, "se_N_O1"),
-      se_O2 = safe_extract(analytical_vars, "se_N_O2"),
-      se_striplet = safe_extract(analytical_vars, "se_N_striplet"),
-      se_boxlet = safe_extract(analytical_vars, "se_N_boxlet"),
+
+      se_R2 = R2_est,
+      se_R3 = R3_est,
+      se_S1 = S1_est,
+      se_S2 = S2_est,
+      se_O1 = O1_est,
+      se_O2 = O2_est,
+      se_P2 = P2_est,
+      se_P3 = P3_est,
+
+      se_striplet = striplet_est,
+      se_boxlet = boxlet_est,
+
       se_boot_std = sd(standard$N_hat, na.rm = TRUE),
       se_boot_disc = sd(disc_density$N_hat, na.rm = TRUE)
     )
-    
-    # Return a list payload containing both the row and the raw arrays
-    # Only populate bootstraps if it's the exact loop matching outer_loop_reps
+
     list(
       row = res_row,
-      bootstraps = if (b == outer_loop_reps) list(Standard = standard$N_hat, Discrete = disc_density$N_hat) else NULL
+      bootstraps =
+        if (b == outer_loop_reps)
+          list(
+            Standard = standard$N_hat,
+            Discrete = disc_density$N_hat
+          )
+        else
+          NULL
     )
-    
-  }) # End of purrr::map
-  
-  # Combine the outputs for this specific 'b' iteration
+
+  })
+
   list(
     summary = map_dfr(inner_results, "row"),
     bootstraps = map(inner_results, "bootstraps")
   )
-  
-}, .options = furrr_options(seed = TRUE)) # CRITICAL: Sets up proper parallel random number generation
 
-# 3. Recombine EVERYTHING globally using purrr extraction
+}, .options = furrr_options(seed = TRUE))
+
 sim_results <- map_dfr(all_runs, "summary")
 
-# Extract the plotting array from the final iteration index
 last_rep_bootstraps <- all_runs[[outer_loop_reps]]$bootstraps
 
-# 4. View summary of results across iterations
-sim_summary <- sim_results |> 
-  group_by(scenario) |> 
-  summarize(
-    mean_N_hat = mean(N_hat, na.rm = TRUE),
-    true_SE = sd(N_hat, na.rm = TRUE), 
-    mean_se_striplet = mean(se_striplet, na.rm = TRUE),
-    mean_se_boot_std = mean(se_boot_std, na.rm = TRUE),
-    mean_se_boot_disc = mean(se_boot_disc, na.rm = TRUE)
-  )
-
-print(sim_summary)
-
-# Safely close workers
 plan(sequential)
 ```
 
@@ -326,17 +325,21 @@ ggplot(plot_data, aes(x = replicate, y = Running_SD, color = Method)) +
 ```
 
 ```{r}
-sim_summary <- sim_results |> 
-  group_by(scenario) |> 
+sim_summary <- sim_results |>
+  group_by(scenario) |>
   summarize(
     mean_N_hat = mean(N_hat, na.rm = TRUE),
-    true_SE = sd(N_hat, na.rm = TRUE), 
+    true_SE = sd(N_hat, na.rm = TRUE),
     mean_se_R2 = mean(se_R2, na.rm = TRUE),
     mean_se_R3 = mean(se_R3, na.rm = TRUE),
+    mean_se_S1 = mean(se_S1, na.rm = TRUE),
     mean_se_S2 = mean(se_S2, na.rm = TRUE),
     mean_se_O1 = mean(se_O1, na.rm = TRUE),
     mean_se_O2 = mean(se_O2, na.rm = TRUE),
+    mean_se_P2 = mean(se_P2, na.rm = TRUE),
+    mean_se_P3 = mean(se_P3, na.rm = TRUE),
     mean_se_striplet = mean(se_striplet, na.rm = TRUE),
+    mean_se_boxlet = mean(se_boxlet, na.rm = TRUE),
     mean_se_boot_std = mean(se_boot_std, na.rm = TRUE),
     mean_se_boot_disc = mean(se_boot_disc, na.rm = TRUE)
   )
@@ -346,18 +349,41 @@ print(sim_summary)
 
 
 ```{r}
-
-desired_order <- c("true_SE", "se_R2", "se_R3", "se_S2", "se_O1", "se_O2", "se_striplet", "se_boot_std", "se_boot_disc")
-
+desired_order <- c(
+  "se_R2",
+  "se_R3",
+  "se_S1",
+  "se_S2",
+  "se_O1",
+  "se_O2",
+  "se_P2",
+  "se_P3",
+  "se_striplet",
+  "se_boxlet",
+  "se_boot_std",
+  "se_boot_disc"
+)
 
 plot_dat <- sim_results |>
-  group_by(scenario) |>
-  pivot_longer(cols = c(true_SE, se_R2, se_R3, se_S2, se_O1, se_O2, se_striplet, se_boot_std, se_boot_disc)) |>
-  select(-se_boxlet) |>
+  pivot_longer(
+    cols = c(
+      se_R2,
+      se_R3,
+      se_S1,
+      se_S2,
+      se_O1,
+      se_O2,
+      se_P2,
+      se_P3,
+      se_striplet,
+      se_boxlet,
+      se_boot_std,
+      se_boot_disc
+    )
+  ) |>
   mutate(name = factor(name, levels = desired_order))
 
-plot_dat |>
-  ggplot(aes(x = name, y = value)) +
+ggplot(plot_dat, aes(x = name, y = value)) +
   geom_boxplot() +
   facet_grid(rows = vars(scenario)) +
   theme_bw()
@@ -365,7 +391,7 @@ plot_dat |>
 
 
 ```{r}
-saveRDS(sim_results, file = "100_outer_250_inner")
+# saveRDS(sim_results, file = "100_outer_250_inner")
 ```
 
 
