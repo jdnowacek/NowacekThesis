@@ -19,7 +19,7 @@ library(qrng)
 # Import Functions
 
 ```{r}
-source(here::here("Functions.R"))
+source(here::here("Functions3.R"))
 ```
 
 # Constants
@@ -35,7 +35,7 @@ design_spacing <- 750
 density_grid_spacing <- 500
 
 design_angle <- 0
-bootstrap_reps <- 1000
+bootstrap_reps <- 5
 
 set.seed(1209)
 
@@ -69,9 +69,11 @@ density_true <- make_hotspot_density(region, my_hotspots)
 ## True population
 
 ```{r}
-sim_pop<- generate_simulated_pop(region)
+sim_pop <- generate_simulated_pop(
+  region = region,
+  density_true = density_true
+)
 
-# FIX: Map these to the exact names exported by the list in get_simulated_pop()
 density <- sim_pop$density
 population_description <- sim_pop$population_description
 population <- sim_pop$population
@@ -83,7 +85,7 @@ detectability <- sim_pop$detectability
 generates the iteration of survey data analogous to real data collection
 
 ```{r}
-survey_data_lines <- generate_survey_data(
+survey_data_lines <- survey_data(
   region = region,
   realized_population = sim_pop$population,
   transect_type = points_or_lines
@@ -97,22 +99,32 @@ samplers <- transects@samplers
 ## Fit
 
 ```{r}
-fit_lines <- get_fit(
-  dist_data = survey_data_lines$dist_data,
-  transects = survey_data_lines$transects,
+ds_results <- fit_ds(
   region = region,
-  transect_type = points_or_lines
+  dist_data = survey_data_lines$dist_data,
+  obsdata = survey_data_lines$obsdata,
+  segdata = survey_data_lines$segdata,
+  transect_type = points_or_lines,
+  truncation = trunc_dist
 )
 
-obs_data_base <- fit_lines$obsdata
-seg_data <- fit_lines$segdata
-dsm1 <- fit_lines$dsm
-density_surface <- fit_lines$density_surface
+dsm_results <- fit_dsm_and_surface(
+  obsdata = survey_data_lines$obsdata,
+  segdata = survey_data_lines$segdata,
+  ds_model = ds_results$ds_model,
+  region = region,
+  N_hat = ds_results$N_hat,
+  transect_type = points_or_lines,
+  x_space = density_grid_spacing,
+  y_space = density_grid_spacing
+)
 
-# EXTRACT ESTIMATED PARAMETER: 
-# Grab the estimated scale parameter from the m1 model 
-# to hold detectability constant based on the base survey's fit.
-m1_sigma_hat <- fit_lines$sigma_hat
+obs_data_base <- survey_data_lines$obsdata
+seg_data <- survey_data_lines$segdata
+dsm1 <- dsm_results$dsm
+density_surface <- dsm_results$density_surface
+
+m1_sigma_hat <- ds_results$sigma_hat
 ```
 
 ## Bootstrap Settings
@@ -127,8 +139,11 @@ prob_vec <- density_surface$N_expected / sum(density_surface$N_expected, na.rm =
 cell_dimensions <- sqrt(density_surface$area)
 
 # Dummy population framework to appease dsims S4 requirements
-dummy_density <- make.density(region = region, x.space = design_spacing, constant = 1)
-
+dummy_density <- make.density(
+  region = region,
+  x.space = density_grid_spacing,
+  constant = 1
+)
 dummy_pop_desc <- make.population.description(
   region = region, 
   density = dummy_density, 
