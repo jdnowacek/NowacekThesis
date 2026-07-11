@@ -27,20 +27,20 @@ source(here::here("Functions3.R"))
 # Constants
 
 ```{r}
-true_N <- 10000
+true_N <- 5000
 
 points_or_lines = "line"
 
-trunc_dist <- 30
+trunc_dist <- 40
 scale_parameter <- 15
 design_spacing <- 500
 
 density_grid_spacing <- 100
 
 design_angle <- 0
-bootstrap_reps <- 10
+bootstrap_reps <- 20
 
-outer_loop_reps <- 3
+outer_loop_reps <- 5
 ```
 
 # Code
@@ -128,9 +128,70 @@ ggplot() +
 ```
 
 
-## For each region:
+# Test Survey
 
 ```{r}
+test_region <- region
+
+test_density_true <- density_true1
+
+test_sim_truth <- generate_simulated_pop(
+  region = test_region,
+  density_true = test_density_true,
+  N = true_N,
+  scale_param = scale_parameter,
+  truncation = trunc_dist
+)
+
+test_population_description <- test_sim_truth$population_description
+test_detectability <- test_sim_truth$detectability
+
+test_survey <- survey_data(
+  region = region,
+  realized_population = test_sim_truth$population,
+  angle = design_angle,
+  transect_type = points_or_lines,
+  spacing = design_spacing,
+  truncation = trunc_dist
+)
+
+test_ds <- fit_ds(
+  region = test_region,
+  dist_data = test_survey$dist_data,
+  obsdata = test_survey$obsdata,
+  segdata = test_survey$segdata,
+  transect_type = points_or_lines,
+  truncation = trunc_dist
+)
+
+test_design <- test_survey$design
+
+test_analyses <- make.ds.analysis(dfmodel = ~ 1,
+                                  key = "hn",
+                                  truncation = trunc_dist,
+                                  criteria = "AIC")
+
+test_sim <- make.simulation(reps = 3,
+                            design = test_design,
+                            population.description = test_population_description,
+                            detectability = test_detectability,
+                            ds.analysis = test_analyses)
+
+# Generate a single instance of a survey: a population, set of transects
+# and the resulting distance data
+test_survey <- run.survey(test_sim)
+
+plot(test_survey, test_region)
+
+plot(test_ds$ds_model)
+
+test_ds$ds_model$dht$individuals
+```
+
+
+## For each region:
+
+```{r, echo=FALSE}
 num_cores <- max(1, parallel::detectCores() - 2)
 plan(multisession, workers = num_cores)
 
@@ -393,17 +454,6 @@ ggplot(plot_dat, aes(x = name, y = value)) +
 ```{r}
 # saveRDS(sim_results, file = "100_outer_250_inner")
 ```
-
-
-
-
-
-
-
-
-
-
-
 
 
 

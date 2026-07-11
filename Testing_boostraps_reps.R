@@ -4,50 +4,130 @@ library(future)
 library(furrr)
 library(parallel)
 
-# Updated to source the new functions file
-source(here::here("Functions2.R"))
+source(here::here("Functions3.R"))
 
 # Setup Constants & Scenario Grid -----
 
-# region params
+# Region parameters
 lower_x <- 0; upper_x <- 5000
 lower_y <- 0; upper_y <- 5000
 
 # Simulation constants
 true_N <- 1000
-density_grid_spacing <- 500
+density_grid_spacing <- 100
 scale_parameter <- 100
-trunc_dist <- 300
+trunc_dist <- 200
 design_angle <- 0
 MAX_BOOT_REPS <- 1000
 design_spacing <- 500
 
+# Density with hotspots
 # hotspots_single <- list(
 #   list(centre = c(2000, 2000), sigma = 500, amplitude = 5),
 #   list(centre = c(8000, 8000), sigma = 500, amplitude = 5),
 #   list(centre = c(2000, 8000), sigma = 500, amplitude = 5)
 # )
 
+# Uniform density
 my_hotspots <- list(
   list(centre = c(2500, 2500), sigma = 8000, amplitude = 0.1)
 )
 
-# Create a grid of scenarios to test the 3 bootstrap methods on lines and points
+# Creates the 4 scenarios to test: combinations of transect type and MC method
 scenarios <- expand_grid(
   transect_type = c("line", "point"),
   boot_method = c("Standard", "Discrete")
-  # boot_method = c("Standard", "InvCDF", "Discrete")
 )
+
+# Test Survey ----
+
+test_transect_type <- "line"
+
+test_region <- make_region(
+  region_sf = NULL,
+  lower_x_bound = lower_x,
+  upper_x_bound = upper_x,
+  lower_y_bound = lower_y,
+  upper_y_bound = upper_y,
+  units = "m"
+)
+
+test_density_true <- make_hotspot_density(
+  region = test_region,
+  hotspots = my_hotspots,
+  x_space = density_grid_spacing
+)
+
+test_sim_truth <- generate_simulated_pop(
+  region = test_region,
+  density_true = test_density_true,
+  N = true_N,
+  scale_param = scale_parameter,
+  truncation = trunc_dist
+)
+
+test_population_description <- test_sim_truth$population_description
+test_detectability <- test_sim_truth$detectability
+
+test_survey <- survey_data(
+  region = test_region,
+  realized_population = test_sim_truth$population,
+  angle = design_angle,
+  transect_type = test_transect_type,
+  spacing = design_spacing,
+  truncation = trunc_dist
+)
+
+test_ds <- fit_ds(
+  region = test_region,
+  dist_data = test_survey$dist_data,
+  obsdata = test_survey$obsdata,
+  segdata = test_survey$segdata,
+  transect_type = test_transect_type,
+  truncation = trunc_dist
+)
+
+test_design <- test_survey$design
+
+test_analyses <- make.ds.analysis(dfmodel = ~ 1,
+                                  key = "hn",
+                                  truncation = trunc_dist,
+                                  criteria = "AIC")
+
+test_sim <- make.simulation(reps = 3,
+                            design = test_design,
+                            population.description = test_population_description,
+                            detectability = test_detectability,
+                            ds.analysis = test_analyses)
+
+# Generate a single instance of a survey: a population, set of transects
+# and the resulting distance data
+test_survey <- run.survey(test_sim)
+
+plot(test_survey, test_region)
+
+# plot(test_survey$transects@samplers$geometry)
+# plot(region@region$geometry, add = TRUE)
+
+density_sf <- test_density_true@density.surface[[1]]
+
+ggplot(density_sf) +
+  geom_sf(aes(fill = density), color = NA) +
+  scale_fill_viridis_c(option = "viridis", name = "Density") +
+  theme_bw() +
+  labs(title = "Simulated Density Surface")
+
+test_ds$sigma_hat
+test_ds$N_hat
 
 # Convergence Evaluation Function -----
 
 evaluate_convergence <- function(transect_type, boot_method) {
   
-  # Note: message() streams better from background workers than cat()
   message(sprintf("Running Scenario: %s Transects with %s Bootstrap...", 
                   toupper(transect_type), toupper(boot_method)))
   
-  # 1. Establish Region & Hotspots
+  # Build region
   region <- make_region(
     region_sf = NULL, 
     lower_x_bound = lower_x, 
@@ -57,60 +137,52 @@ evaluate_convergence <- function(transect_type, boot_method) {
     units = "m"
   )
   
-  # 2. Generate Truth & Survey using the single density
+  # Generate density, population, survey
+  density_true <- make_hotspot_density(
+    region = region,
+    hotspots = my_hotspots,
+    x_space = density_grid_spacing
+  )
+  
   sim_truth <- generate_simulated_pop(
-    region = region, 
-    N = true_N, 
-    x_space = density_grid_spacing, 
-    hotspots = my_hotspots, 
-    scale_param = scale_parameter, 
+    region = region,
+    density_true = density_true,
+    N = true_N,
+    scale_param = scale_parameter,
     truncation = trunc_dist
   )
   
-  sim_survey <- generate_survey_data(
-    region = region, 
+  sim_survey <- survey_data(
+    region = region,
     realized_population = sim_truth$population,
-    angle = design_angle,            
+    angle = design_angle,
     transect_type = transect_type,
     spacing = design_spacing,
     truncation = trunc_dist
   )
   
-  # 3. Fit Models (Replacing the old get_fit wrapper)
-  ds_results <- fit_ds_model(
+  # Fit models 
+  ds_results <- fit_ds(
+    region = region,
     dist_data = sim_survey$dist_data,
+    obsdata = sim_survey$obsdata,
+    segdata = sim_survey$segdata,
     transect_type = transect_type,
     truncation = trunc_dist
   )
   
-  dsm_results <- fit_dsm_model(
-    dist_data = sim_survey$dist_data,
-    transects = sim_survey$transects,
+  dsm_results <- fit_dsm_and_surface(
+    obsdata = sim_survey$obsdata,
+    segdata = sim_survey$segdata,
+    ds_model = ds_results$ds_model,
     region = region,
-    detection_model = ds_results$detection_model,
     N_hat = ds_results$N_hat,
     transect_type = transect_type,
-    truncation = trunc_dist,
-    x_space = density_grid_spacing, 
-    y_space = density_grid_spacing  
+    x_space = density_grid_spacing,
+    y_space = density_grid_spacing
   )
   
-  # analytical_variances <- calculate_variance_estimators(
-  #   obsdata = dsm_results$obsdata,
-  #   segdata = dsm_results$segdata,
-  #   region = region,
-  #   detection_model = ds_results$detection_model,
-  #   dsm_model = dsm_results$dsm,
-  #   dsm_surface = dsm_results$density_surface,
-  #   pred_grid = dsm_results$pred_grid,
-  #   N_hat = ds_results$N_hat,
-  #   sigma_hat = ds_results$sigma_hat,
-  #   transect_type = transect_type,
-  #   spacing = spacing,
-  #   truncation = trunc_dist
-  # )
-  
-  # 4. Dynamically select and run the correct bootstrap function
+  # Run each bootstrap function
   boot_func <- switch(boot_method,
                       "Standard" = get_bootstrap,
                       # "InvCDF"   = get_bootstrap_invcdf,
@@ -123,20 +195,16 @@ evaluate_convergence <- function(transect_type, boot_method) {
     population_description = dsm_results$population_description,
     sigma_hat = ds_results$sigma_hat,
     transect_type = transect_type,
-    reps = MAX_BOOT_REPS,
-    angle = design_angle,
-    spacing = design_spacing,
-    truncation = trunc_dist
+    reps = MAX_BOOT_REPS
   )
   
-  # 5. Calculate Cumulative Standard Deviation
-  eval_reps <- 10:MAX_BOOT_REPS
+  # 5. Calculate cumulative standard deviation
+  eval_reps <- 50:MAX_BOOT_REPS
   
   cumulative_sd <- purrr::map_dbl(eval_reps, function(i) {
     sd(boot_res$N_hat[1:i], na.rm = TRUE)
   })
   
-  # Return data formatted for ggplot
   tibble(
     transect_type = transect_type,
     boot_method = boot_method,
@@ -145,7 +213,7 @@ evaluate_convergence <- function(transect_type, boot_method) {
   )
 }
 
-# Execution and Visualization -----
+# Running simulations -----
 
 # Setup Parallel Backend
 total_cores <- parallel::detectCores()
@@ -161,7 +229,9 @@ convergence_results <- furrr::future_pmap_dfr(
   .options = furrr::furrr_options(seed = TRUE) # CRITICAL: Ensures valid RNG across cores
 )
 
-# Plot the convergence trajectories
+# Plot results ----
+
+# Plot the convergence
 convergence_plot <- ggplot(convergence_results, aes(x = iterations, y = cumulative_se, color = boot_method)) +
   geom_line(linewidth = 1) + 
   facet_wrap(~ transect_type, scales = "free_y", labeller = label_both) +

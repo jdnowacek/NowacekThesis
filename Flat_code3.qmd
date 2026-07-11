@@ -1,9 +1,9 @@
 ---
-title: "Flat_code"
+title: "Flat_code3"
 format: html
 ---
 
-## Packages
+# Packages
 
 ```{r}
 library(tidyverse)
@@ -16,7 +16,7 @@ library(mgcv)
 library(knitr)
 ```
 
-## Constants
+# Constants
 
 ```{r}
 # Simulation constants
@@ -32,8 +32,8 @@ scale_parameter <- 250
 trunc_dist <- 500
 design_angle <- 0
 design_spacing <- 1000
-points_or_lines <- "line" # Switch to "point" if testing point transects
-bootstrap_reps <- 5
+points_or_lines <- "line" 
+bootstrap_reps <- 20
 
 # Set up hotspots
 my_hotspots <- list(
@@ -43,7 +43,7 @@ my_hotspots <- list(
 )
 ```
 
-## Region
+# Create region
 
 ```{r}
 # Create basic sf boundary box
@@ -58,7 +58,7 @@ region <- make.region(region.name = "region",
                       units = units)
 ```
 
-## True Density
+# Create density
 
 ```{r}
 # Create basic uniform density
@@ -90,7 +90,7 @@ density_true <- make.density(
 )
 ```
 
-### Plot density
+## Plot density
 
 ```{r}
 # Visualizing the underlying generated density map 
@@ -102,8 +102,7 @@ ggplot(density_surface_true) +
        fill = "Density (Animals/Cell)")
 ```
 
-
-## True Population
+# Simulate Population
 
 ```{r}
 # Build population description
@@ -127,9 +126,11 @@ pop_true <- generate.population(
   detectability = detect_true,
   region = region
 )
+
+plot(pop_true, region)
 ```
 
-## Realized Survey Data 
+# Survey data
 
 ```{r}
 # Build design layout
@@ -168,10 +169,11 @@ observed_survey <- run.survey(survey, region = region)
 dist_data <- observed_survey@dist.data
 
 plot(survey)
+```
 
-# -------------------------------------------------------------
-# Data Wrangling for ds() and dsm() - (Using simplified centroids)
-# -------------------------------------------------------------
+# Data wrangling
+
+```{r}
 obsdata <- dist_data |> 
   filter(!is.na(distance)) |> 
   mutate(object = as.character(object),
@@ -205,7 +207,7 @@ if (points_or_lines == "line") {
 }
 ```
 
-## ds() model
+# ds model
 
 ```{r}
 # Fit basic detection function model
@@ -235,9 +237,11 @@ if (!is.null(cv_p_val) && length(cv_p_val) > 0) {
 
 Region_Area <- as.numeric(sf::st_area(region@region))
 D_hat <- N_hat / Region_Area
+
+plot(m1)
 ```
 
-## fit dsm and predict
+# Fit dsm and density surface
 
 ```{r}
 if (nrow(obsdata) > 0) {
@@ -261,14 +265,20 @@ if (nrow(obsdata) > 0) {
   }
   
   # Create prediction grid
-  prediction_grid <- make.density(region = region, x.space = density_grid_spacing, y.space = density_grid_spacing, constant = 1)
+  prediction_grid <- make.density(region = region, 
+                                  x.space = density_grid_spacing, 
+                                  y.space = density_grid_spacing, 
+                                  constant = 1)
   
   pred_grid <- prediction_grid@density.surface[[1]] |> 
     mutate(area = as.numeric(sf::st_area(geometry)))
   
   pred_data <- sf::st_drop_geometry(pred_grid)
   
-  predictions <- predict(dsm1, newdata = pred_data, off.set = pred_grid$area, type = "response")
+  predictions <- predict(dsm1, 
+                         newdata = pred_data, 
+                         off.set = pred_grid$area, 
+                         type = "response")
   
   pred_grid <- pred_grid |> 
     mutate(
@@ -317,7 +327,7 @@ if (nrow(obsdata) > 0) {
 }
 ```
 
-### Predicted density plot
+## Predicted density plot
 
 ```{r}
 # Visualize the fitted Density Surface Model predictions
@@ -334,8 +344,7 @@ if (exists("pred_grid") && nrow(obsdata) > 0) {
 }
 ```
 
-
-## Analytical Variances 
+# Analytical Variances
 
 ```{r}
 analytical_variances <- NULL
@@ -426,11 +435,20 @@ if (nrow(obsdata) > 0) {
     var.O1 <- k / (2 * L^2 * (k - 1)) * sum((nvec.1 - nvec.2 - ntot/L * (lvec.1 - lvec.2))^2)
     var.O2 <- (2 * k) / (L^2 * (k - 1)) * sum(((lvec.1 * lvec.2)/(lvec.1 + lvec.2))^2 * (ervec.1 - ervec.2)^2)
     
+    # Bundle all line estimators into analytical_variances list
     delta_R2 <- apply_delta(var.R2, erhat_obs)
+    delta_R3 <- apply_delta(var.R3, erhat_obs)
+    delta_S1 <- apply_delta(var.S1, erhat_obs)
+    delta_S2 <- apply_delta(var.S2, erhat_obs)
+    delta_O1 <- apply_delta(var.O1, erhat_obs)
     delta_O2 <- apply_delta(var.O2, erhat_obs)
     
     analytical_variances <- list(
       var_ER_R2 = var.R2, se_N_R2 = delta_R2$se_N,
+      var_ER_R3 = var.R3, se_N_R3 = delta_R3$se_N,
+      var_ER_S1 = var.S1, se_N_S1 = delta_S1$se_N,
+      var_ER_S2 = var.S2, se_N_S2 = delta_S2$se_N,
+      var_ER_O1 = var.O1, se_N_O1 = delta_O1$se_N,
       var_ER_O2 = var.O2, se_N_O2 = delta_O2$se_N
     )
     
@@ -526,68 +544,102 @@ if (nrow(obsdata) > 0) {
 }
 ```
 
-
-### variance table
-
-```{r}
-# # Display a formatted table of the calculated Analytical Variances
-# if (!is.null(analytical_variances)) {
-#   variance_summary <- data.frame(
-#     Estimator = c("Systematic (R2)", "Overlapping (O2)", "Analytical Striplet"),
-#     `Encounter Rate Variance` = c(analytical_variances$var_ER_R2, NA, analytical_variances$var_ER_striplet),
-#     `Final SE(N_hat)` = c(analytical_variances$se_N_R2, analytical_variances$se_N_O2, analytical_variances$se_N_striplet)
-#   )
-#   
-#   kable(variance_summary, digits = 3, caption = "Comparison of Analytical Variance Estimators (Line Transects)")
-# } else {
-#   print("Analytical variances not available. Point transects were likely selected or no detections occurred.")
-# }
-```
-
-
-## Bootstraps
+# Bootstraps
 
 ```{r}
-# Note: Relies on pop.desc object created during DSM fit chunk above
-detect_boot <- make.detectability(
-  key.function = "hn",
-  scale.param = sigma_hat,
-  truncation = trunc_dist
-)
-
-analyses_boot <- make.ds.analysis(
-  dfmodel = ~ 1,
-  key = "hn",
-  truncation = trunc_dist,
-  criteria = "AIC"
-)
-
-sim_obj <- make.simulation(
-  reps = bootstrap_reps,
-  design = design, 
-  population.description = pop.desc, 
-  detectability = detect_boot,
-  ds.analysis = analyses_boot
-)
-
-# Run the simulation 
-sim_obj <- run.simulation(sim_obj)
-
-# Extract N_hats
-N_hat_boot <- as.numeric(
-  sim_obj@results[["individuals"]][["N"]][1, "Estimate", seq_len(bootstrap_reps)]
-)
-
-bootstrap_results <- data.frame(
-  replicate = seq_len(bootstrap_reps),
-  N_hat = N_hat_boot
-)
-
-# Calculate empirical Standard Error
-empirical_SE <- sd(bootstrap_results$N_hat, na.rm = TRUE)
+# Only runs if we have a valid density surface generated previously
+if (exists("pred_grid") && !is.na(N_hat) && N_hat > 0) {
+  
+  # Prepare the probability vector using the dsm prediction grid
+  density_surface_boot <- pred_grid |>
+    mutate(N_expected = density * area)
+  
+  prob_vec <- density_surface_boot$N_expected / sum(density_surface_boot$N_expected, na.rm = TRUE)
+  cell_dimensions <- sqrt(density_surface_boot$area)
+  
+  # Create a baseline dummy population to house the randomly generated animals
+  dummy_density <- dsims::make.density(region = region, x.space = density_grid_spacing, constant = 1)
+  dummy_pop_desc <- dsims::make.population.description(
+    region = region,
+    density = dummy_density,
+    N = N_hat,
+    fixed.N = TRUE
+  )
+  
+  detect_boot <- make.detectability(key.function = "hn", scale.param = sigma_hat, truncation = trunc_dist)
+  
+  N_hat_results <- rep(NA, bootstrap_reps)
+  
+  # Iterative evaluation of spatial and process variance
+  for (b in 1:bootstrap_reps) {
+    
+    # 1. Generate new animal placements in the discrete grid cells
+    cell_counts <- as.vector(rmultinom(n = 1, size = N_hat, prob = prob_vec))
+    
+    base_x <- rep(density_surface_boot$x, cell_counts)
+    base_y <- rep(density_surface_boot$y, cell_counts)
+    base_sizes <- rep(cell_dimensions, cell_counts)
+    
+    # Randomly jitter uniformly inside their assigned boxlets
+    animal_x <- base_x + runif(N_hat, min = -base_sizes/2, max = base_sizes/2)
+    animal_y <- base_y + runif(N_hat, min = -base_sizes/2, max = base_sizes/2)
+    
+    # Initialize Population
+    realized_population <- dsims::generate.population(
+      object = dummy_pop_desc,
+      detectability = detect_boot,
+      region = region
+    )
+    
+    # Overwrite the randomly initialized coordinates with the boxlet derived coordinates
+    native_pop <- realized_population@population
+    native_pop$x <- animal_x
+    native_pop$y <- animal_y
+    realized_population@population <- as.data.frame(native_pop)
+    
+    # 2. Re-throw the survey transects
+    current_transects <- generate.transects(design)
+    
+    if (points_or_lines == "point") {
+      survey_boot <- new("Survey.PT", 
+                         population = realized_population, 
+                         transect = current_transects, 
+                         rad.truncation = trunc_dist)
+    } else {
+      survey_boot <- new("Survey.LT", 
+                         population = realized_population, 
+                         transect = current_transects, 
+                         perp.truncation = trunc_dist)
+    }
+    
+    # Run simulation
+    survey_run <- suppressWarnings(run.survey(survey_boot, region = region))
+    obs_data_boot <- survey_run@dist.data
+    
+    # 3. Fit base detection model to capture N_hat
+    if (nrow(obs_data_boot) > 0) {
+      tryCatch({
+        capture.output(
+          m2 <- ds(data = obs_data_boot, 
+                   transect = points_or_lines, 
+                   key = "hn", 
+                   adjustment = NULL, 
+                   truncation = trunc_dist, 
+                   quiet = TRUE)
+        )
+        N_hat_results[b] <- as.numeric(m2$dht$individuals$N$Estimate)
+      }, error = function(e) {
+        N_hat_results[b] <- NA
+      })
+    }
+  }
+  
+  bootstrap_results <- data.frame(replicate = seq_len(bootstrap_reps), N_hat = N_hat_results)
+  empirical_SE <- sd(bootstrap_results$N_hat, na.rm = TRUE)
+}
 ```
 
-### Summary of bootstraps
+## Bootstrap Summary
 
 ```{r}
 # Final visual and tabular breakdown of bootstrap loop results
@@ -608,7 +660,8 @@ if (exists("bootstrap_results")) {
                linetype = "dashed", linewidth = 1.2) +
     geom_vline(aes(xintercept = N_hat, color = "True Model N_hat"), 
                linetype = "solid", linewidth = 1) +
-    scale_color_manual(name = "Legend", values = c("Mean Boot N_hat" = "red", "True Model N_hat" = "darkgreen")) +
+    scale_color_manual(name = "Legend", values = c("Mean Boot N_hat" = "red", 
+                                                   "True Model N_hat" = "darkgreen")) +
     theme_minimal() +
     labs(title = paste("Distribution of N_hat over", bootstrap_reps, "Bootstraps"),
          x = "Estimated Abundance (N_hat)", y = "Frequency")
@@ -619,6 +672,72 @@ if (exists("bootstrap_results")) {
   print("Bootstrap sequence did not run (likely missing observations or surface data).")
 }
 ```
+
+# Variance Comparison
+
+```{r}
+# Safely extract values from a list to avoid NULL errors
+safe_extract <- function(lst, name) {
+  if (!is.null(lst[[name]])) lst[[name]] else NA_real_
+}
+
+if (points_or_lines == "line") {
+  R2_est       <- safe_extract(analytical_variances, "se_N_R2")
+  R3_est       <- safe_extract(analytical_variances, "se_N_R3")
+  S1_est       <- safe_extract(analytical_variances, "se_N_S1")
+  S2_est       <- safe_extract(analytical_variances, "se_N_S2")
+  O1_est       <- safe_extract(analytical_variances, "se_N_O1")
+  O2_est       <- safe_extract(analytical_variances, "se_N_O2")
+  P2_est       <- NA_real_
+  P3_est       <- NA_real_
+  striplet_est <- safe_extract(analytical_variances, "se_N_striplet")
+  boxlet_est   <- NA_real_
+} else {
+  R2_est       <- NA_real_
+  R3_est       <- NA_real_
+  S1_est       <- NA_real_
+  S2_est       <- NA_real_
+  O1_est       <- NA_real_
+  O2_est       <- NA_real_
+  P2_est       <- safe_extract(analytical_variances, "se_N_P2")
+  P3_est       <- safe_extract(analytical_variances, "se_N_P3")
+  striplet_est <- NA_real_
+  boxlet_est   <- safe_extract(analytical_variances, "se_N_boxlet")
+}
+
+bootstrap_est <- if (exists("empirical_SE")) empirical_SE else NA_real_
+
+# Create summary framework table
+variance_comparison <- tibble(
+  Estimator = c(
+    "R2", 
+    "R3", 
+    "S1", 
+    "S2", 
+    "O1", 
+    "O2", 
+    "P2", 
+    "P3", 
+    "Striplet", 
+    "Boxlet", 
+    "Bootstrap"
+  ),
+  `SE (N_hat)` = c(
+    R2_est, R3_est, S1_est, S2_est, O1_est, O2_est, 
+    P2_est, P3_est, striplet_est, boxlet_est, bootstrap_est
+  )
+) |> 
+  filter(!is.na(`SE (N_hat)`)) # Only display metrics active for the current transect method
+
+kable(variance_comparison, digits = 3, caption = "Summary Comparison of Standard Errors")
+```
+
+
+
+
+
+
+
 
 
 

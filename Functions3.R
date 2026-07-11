@@ -583,16 +583,144 @@ striplet_boxlet <- function(region,
   
   spatial_variances <- list()
   
+  # if (transect_type == "line") {
+  #   
+  #   muvec <- dsm_surface$N_hat_pred 
+  #   midvec <- dsm_surface$x
+  #   musum <- sum(muvec, na.rm = TRUE)
+  #   
+  #   bbox <- sf::st_bbox(region@region)
+  #   y_length <- as.numeric(bbox["ymax"] - bbox["ymin"])
+  #   x_min <- as.numeric(bbox["xmin"])
+  #   x_max <- as.numeric(bbox["xmax"])
+  #   
+  #   B <- 50 
+  #   bvec <- seq(0, spacing, length.out = B)
+  #   Lbvec <- rep(0, B)
+  #   Abvec <- rep(0, B)
+  #   
+  #   for (b_idx in 1:B) {
+  #     b_val <- bvec[b_idx]
+  #     lines_grid <- seq(x_min + b_val, x_max, by = spacing)
+  #     
+  #     line_strings <- lapply(lines_grid, function(x) {
+  #       sf::st_linestring(matrix(c(x, bbox["ymin"], x, bbox["ymax"]), ncol = 2, byrow = TRUE))
+  #     })
+  #     lines_sf <- sf::st_sfc(line_strings, crs = sf::st_crs(region@region))
+  #     clipped_lines <- suppressWarnings(sf::st_intersection(lines_sf, region@region))
+  #     
+  #     Lbvec[b_idx] <- as.numeric(sum(sf::st_length(clipped_lines)))
+  #     min_dist <- sapply(midvec, function(m) min(abs(m - lines_grid)))
+  #     
+  #     g_b <- exp(- (min_dist^2) / (2 * sigma_hat^2))
+  #     g_b[min_dist > truncation] <- 0 
+  #     
+  #     Abvec[b_idx] <- sum(muvec * g_b, na.rm = TRUE)
+  #   }
+  #   
+  #   # var_ER_striplet <- mean((Abvec + (Abvec^2) * (1 - 1/musum)) / (Lbvec^2)) - (mean(Abvec / Lbvec))^2
+  #   # erhat_striplet <- mean(Abvec / Lbvec, na.rm = TRUE)
+  #   
+  #   var_ER_striplet <- mean((Abvec + (Abvec^2) * (1 - 1/musum)) / (Lbvec^2), na.rm = TRUE) - (mean(Abvec / Lbvec, na.rm = TRUE))^2
+  #   erhat_striplet <- mean(Abvec / Lbvec, na.rm = TRUE)
+  #   
+  #   delta_striplet <- apply_delta(var_ER_striplet, erhat_striplet)
+  #   spatial_variances$se_N_striplet <- delta_striplet$se_N
+  #   spatial_variances$se_D_striplet <- delta_striplet$se_D
+  #   
+  # } else if (transect_type == "point") {
+  #   
+  #   grid_cells <- 50 
+  #   region_sf <- region@region
+  #   region_bbox <- sf::st_bbox(region_sf)
+  #   
+  #   x_range <- as.numeric(region_bbox["xmax"] - region_bbox["xmin"])
+  #   y_range <- as.numeric(region_bbox["ymax"] - region_bbox["ymin"])
+  #   max_range <- max(x_range, y_range)
+  #   square_dim <- max_range / grid_cells
+  #   
+  #   boxlets <- sf::st_make_grid(region_sf, cellsize = c(square_dim, square_dim), square = TRUE)
+  #   boxlets_sf <- sf::st_sf(geometry = boxlets) |> dplyr::mutate(box_id = dplyr::row_number())
+  #   
+  #   boxlet_cents <- sf::st_centroid(boxlets_sf)
+  #   inside_region <- sf::st_intersects(boxlet_cents, region_sf, sparse = FALSE)[, 1]
+  #   boxlets_sf <- boxlets_sf[inside_region, ]
+  #   
+  #   boxlets_sf <- boxlets_sf |> dplyr::mutate(area = as.numeric(sf::st_area(geometry)))
+  #   boxlet_coords <- sf::st_coordinates(sf::st_centroid(boxlets_sf))
+  #   boxlets_sf$x <- boxlet_coords[, "X"]
+  #   boxlets_sf$y <- boxlet_coords[, "Y"]
+  #   
+  #   pred_data <- sf::st_drop_geometry(boxlets_sf)
+  #   pred_N <- predict(dsm_model, newdata = pred_data, off.set = pred_data$area, type = "response")
+  #   p_j <- pred_N / sum(pred_N, na.rm = TRUE)
+  #   
+  #   p_j[is.na(p_j)] <- 0 
+  #   p_j[p_j < 0] <- 0 
+  #   
+  #   fitted_probs <- m1$ddf$fitted
+  #   if (is.null(fitted_probs) || length(fitted_probs) == 0) {
+  #     P_a <- summary(m1$ddf)$average.p
+  #   } else {
+  #     P_a <- length(fitted_probs) / sum(1 / fitted_probs)
+  #   }
+  #   
+  #   shift_res <- spacing / 5 
+  #   b_x <- seq(0, spacing - shift_res, by = shift_res)
+  #   b_y <- seq(0, spacing - shift_res, by = shift_res)
+  #   shifts <- expand.grid(x = b_x, y = b_y)
+  #   B <- nrow(shifts) 
+  #   
+  #   A_b <- numeric(B)
+  #   
+  #   base_x <- seq(region_bbox["xmin"] - spacing, region_bbox["xmax"] + spacing, by = spacing)
+  #   base_y <- seq(region_bbox["ymin"] - spacing, region_bbox["ymax"] + spacing, by = spacing)
+  #   base_grid <- expand.grid(X = base_x, Y = base_y)
+  #   
+  #   for (i in 1:B) {
+  #     shifted_grid <- base_grid
+  #     shifted_grid$X <- shifted_grid$X + shifts$x[i]
+  #     shifted_grid$Y <- shifted_grid$Y + shifts$y[i]
+  #     
+  #     shifted_points <- sf::st_as_sf(shifted_grid, coords = c("X", "Y"))
+  #     shifted_buffers <- sf::st_buffer(shifted_points, dist = truncation)
+  #     shifted_survey_area <- sf::st_union(shifted_buffers)
+  #     
+  #     active_boxlets <- sf::st_intersects(boxlet_cents[inside_region], shifted_survey_area, sparse = FALSE)[, 1]
+  #     
+  #     Q_b <- sum(p_j[active_boxlets], na.rm = TRUE) * P_a
+  #     A_b[i] <- N_hat * Q_b
+  #   }
+  #   
+  #   mean_A <- mean(A_b)
+  #   var_n <- (1/B) * sum(A_b + (A_b^2) * (1 - 1/N_hat)) - mean_A^2
+  #   var_n_boxlet <- max(0, var_n) 
+  #   
+  #   k_points <- nrow(segdata)
+  #   erhat_boxlet <- mean_A / k_points
+  #   var_ER_boxlet <- var_n_boxlet / (k_points^2)
+  #   
+  #   delta_boxlet <- apply_delta(var_ER_boxlet, erhat_boxlet)
+  #   spatial_variances$se_N_boxlet <- delta_boxlet$se_N
+  #   spatial_variances$se_D_boxlet <- delta_boxlet$se_D
+  # }
+  
   if (transect_type == "line") {
     
+    # Normalize abundance to N_hat value
     muvec <- dsm_surface$N_hat_pred 
     midvec <- dsm_surface$x
-    musum <- sum(muvec, na.rm = TRUE)
     
-    bbox <- sf::st_bbox(region@region)
-    y_length <- as.numeric(bbox["ymax"] - bbox["ymin"])
-    x_min <- as.numeric(bbox["xmin"])
-    x_max <- as.numeric(bbox["xmax"])
+    musum_raw <- sum(muvec, na.rm = TRUE)
+    if(musum_raw > 0) {
+      muvec <- muvec * (N_hat / musum_raw)
+    }
+    musum <- sum(muvec, na.rm = TRUE) # Now exactly equals N_hat
+    
+    # Determine the cell width across the X-axis 
+
+    cell_width <- min(diff(sort(unique(midvec))))
+    if (is.na(cell_width) || cell_width <= 0) cell_width <- 1
     
     B <- 50 
     bvec <- seq(0, spacing, length.out = B)
@@ -612,97 +740,90 @@ striplet_boxlet <- function(region,
       Lbvec[b_idx] <- as.numeric(sum(sf::st_length(clipped_lines)))
       min_dist <- sapply(midvec, function(m) min(abs(m - lines_grid)))
       
-      g_b <- exp(- (min_dist^2) / (2 * sigma_hat^2))
-      g_b[min_dist > truncation] <- 0 
+      # Sets up cell boundary
+      lower_bound <- min_dist - (cell_width / 2)
+      upper_bound <- min_dist + (cell_width / 2)
+      
+      # Ensures the integration bounds can not exceed truncation
+      lower_bound_clamped <- pmax(lower_bound, -truncation)
+      upper_bound_clamped <- pmin(upper_bound, truncation)
+      
+      # Integrate the area under the curve ONLY within the observable window.
+      # If a cell is entirely outside the truncation distance, the clamped bounds 
+      # will cross over each other. pmax(0, ...) catches this and safely forces it to 0.
+      integral_val <- sqrt(2 * pi) * sigma_hat * pmax(0, 
+         pnorm(upper_bound_clamped, mean = 0, sd = sigma_hat) - 
+         pnorm(lower_bound_clamped, mean = 0, sd = sigma_hat)
+      )
+      
+      # Average probability of detection for an animal ANYWHERE in the discrete cell
+      g_b <- integral_val / cell_width
       
       Abvec[b_idx] <- sum(muvec * g_b, na.rm = TRUE)
     }
     
-    # var_ER_striplet <- mean((Abvec + (Abvec^2) * (1 - 1/musum)) / (Lbvec^2)) - (mean(Abvec / Lbvec))^2
-    # erhat_striplet <- mean(Abvec / Lbvec, na.rm = TRUE)
     
-    var_ER_striplet <- mean((Abvec + (Abvec^2) * (1 - 1/musum)) / (Lbvec^2), na.rm = TRUE) - (mean(Abvec / Lbvec, na.rm = TRUE))^2
+    bbox <- sf::st_bbox(region@region)
+    y_length <- as.numeric(bbox["ymax"] - bbox["ymin"])
+    x_min <- as.numeric(bbox["xmin"])
+    x_max <- as.numeric(bbox["xmax"])
+    
+    # Determine the discrete cell width across the X-axis 
+    # (Renamed from 'w' to avoid confusion with truncation distance nomenclature)
+    cell_width <- min(diff(sort(unique(midvec))))
+    if (is.na(cell_width) || cell_width <= 0) cell_width <- 1
+    
+    B <- 50 
+    bvec <- seq(0, spacing, length.out = B)
+    Lbvec <- rep(0, B)
+    Abvec <- rep(0, B)
+    
+    for (b_idx in 1:B) {
+      b_val <- bvec[b_idx]
+      lines_grid <- seq(x_min + b_val, x_max, by = spacing)
+      
+      line_strings <- lapply(lines_grid, function(x) {
+        sf::st_linestring(matrix(c(x, bbox["ymin"], x, bbox["ymax"]), ncol = 2, byrow = TRUE))
+      })
+      lines_sf <- sf::st_sfc(line_strings, crs = sf::st_crs(region@region))
+      clipped_lines <- suppressWarnings(sf::st_intersection(lines_sf, region@region))
+      
+      Lbvec[b_idx] <- as.numeric(sum(sf::st_length(clipped_lines)))
+      min_dist <- sapply(midvec, function(m) min(abs(m - lines_grid)))
+      
+      # 2. Strict Integral Bounded by Truncation (w)
+      # Define the cell's boundaries relative to the transect line
+      lower_bound <- min_dist - (cell_width / 2)
+      upper_bound <- min_dist + (cell_width / 2)
+      
+      # Clamp the integration bounds so they never exceed the truncation window [-w, +w]
+      lower_bound_clamped <- pmax(lower_bound, -truncation)
+      upper_bound_clamped <- pmin(upper_bound, truncation)
+      
+      # Integrate the area under the curve ONLY within the observable window.
+      # If a cell is entirely outside the truncation distance, the clamped bounds 
+      # will cross over each other. pmax(0, ...) catches this and safely forces it to 0.
+      integral_val <- sqrt(2 * pi) * sigma_hat * pmax(0, 
+                                                      pnorm(upper_bound_clamped, mean = 0, sd = sigma_hat) - 
+                                                        pnorm(lower_bound_clamped, mean = 0, sd = sigma_hat)
+      )
+      
+      # Average probability of detection for an animal ANYWHERE in the discrete cell
+      g_b <- integral_val / cell_width
+      
+      Abvec[b_idx] <- sum(muvec * g_b, na.rm = TRUE)
+    }
+    
+    # Encounter rate variance
+    var_ER_striplet <- mean((Abvec + (Abvec^2) * (1 - 1/musum)) / (Lbvec^2), na.rm = TRUE) - 
+      (mean(Abvec / Lbvec, na.rm = TRUE))^2
+    
     erhat_striplet <- mean(Abvec / Lbvec, na.rm = TRUE)
     
     delta_striplet <- apply_delta(var_ER_striplet, erhat_striplet)
     spatial_variances$se_N_striplet <- delta_striplet$se_N
     spatial_variances$se_D_striplet <- delta_striplet$se_D
     
-  } else if (transect_type == "point") {
-    
-    grid_cells <- 50 
-    region_sf <- region@region
-    region_bbox <- sf::st_bbox(region_sf)
-    
-    x_range <- as.numeric(region_bbox["xmax"] - region_bbox["xmin"])
-    y_range <- as.numeric(region_bbox["ymax"] - region_bbox["ymin"])
-    max_range <- max(x_range, y_range)
-    square_dim <- max_range / grid_cells
-    
-    boxlets <- sf::st_make_grid(region_sf, cellsize = c(square_dim, square_dim), square = TRUE)
-    boxlets_sf <- sf::st_sf(geometry = boxlets) |> dplyr::mutate(box_id = dplyr::row_number())
-    
-    boxlet_cents <- sf::st_centroid(boxlets_sf)
-    inside_region <- sf::st_intersects(boxlet_cents, region_sf, sparse = FALSE)[, 1]
-    boxlets_sf <- boxlets_sf[inside_region, ]
-    
-    boxlets_sf <- boxlets_sf |> dplyr::mutate(area = as.numeric(sf::st_area(geometry)))
-    boxlet_coords <- sf::st_coordinates(sf::st_centroid(boxlets_sf))
-    boxlets_sf$x <- boxlet_coords[, "X"]
-    boxlets_sf$y <- boxlet_coords[, "Y"]
-    
-    pred_data <- sf::st_drop_geometry(boxlets_sf)
-    pred_N <- predict(dsm_model, newdata = pred_data, off.set = pred_data$area, type = "response")
-    p_j <- pred_N / sum(pred_N, na.rm = TRUE)
-    
-    p_j[is.na(p_j)] <- 0 
-    p_j[p_j < 0] <- 0 
-    
-    fitted_probs <- m1$ddf$fitted
-    if (is.null(fitted_probs) || length(fitted_probs) == 0) {
-      P_a <- summary(m1$ddf)$average.p
-    } else {
-      P_a <- length(fitted_probs) / sum(1 / fitted_probs)
-    }
-    
-    shift_res <- spacing / 5 
-    b_x <- seq(0, spacing - shift_res, by = shift_res)
-    b_y <- seq(0, spacing - shift_res, by = shift_res)
-    shifts <- expand.grid(x = b_x, y = b_y)
-    B <- nrow(shifts) 
-    
-    A_b <- numeric(B)
-    
-    base_x <- seq(region_bbox["xmin"] - spacing, region_bbox["xmax"] + spacing, by = spacing)
-    base_y <- seq(region_bbox["ymin"] - spacing, region_bbox["ymax"] + spacing, by = spacing)
-    base_grid <- expand.grid(X = base_x, Y = base_y)
-    
-    for (i in 1:B) {
-      shifted_grid <- base_grid
-      shifted_grid$X <- shifted_grid$X + shifts$x[i]
-      shifted_grid$Y <- shifted_grid$Y + shifts$y[i]
-      
-      shifted_points <- sf::st_as_sf(shifted_grid, coords = c("X", "Y"))
-      shifted_buffers <- sf::st_buffer(shifted_points, dist = truncation)
-      shifted_survey_area <- sf::st_union(shifted_buffers)
-      
-      active_boxlets <- sf::st_intersects(boxlet_cents[inside_region], shifted_survey_area, sparse = FALSE)[, 1]
-      
-      Q_b <- sum(p_j[active_boxlets], na.rm = TRUE) * P_a
-      A_b[i] <- N_hat * Q_b
-    }
-    
-    mean_A <- mean(A_b)
-    var_n <- (1/B) * sum(A_b + (A_b^2) * (1 - 1/N_hat)) - mean_A^2
-    var_n_boxlet <- max(0, var_n) 
-    
-    k_points <- nrow(segdata)
-    erhat_boxlet <- mean_A / k_points
-    var_ER_boxlet <- var_n_boxlet / (k_points^2)
-    
-    delta_boxlet <- apply_delta(var_ER_boxlet, erhat_boxlet)
-    spatial_variances$se_N_boxlet <- delta_boxlet$se_N
-    spatial_variances$se_D_boxlet <- delta_boxlet$se_D
   }
   
   return(spatial_variances)
