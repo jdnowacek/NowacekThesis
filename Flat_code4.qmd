@@ -1,0 +1,680 @@
+---
+title: "Flat_code4"
+format: html
+---
+
+# Packages
+
+```{r}
+library(tidyverse)
+library(dsims)
+library(Distance)
+library(dssd)
+library(dsm)
+library(sf)
+library(mgcv)
+library(qrng) 
+```
+
+# Parameters
+
+```{r}
+lower_x_bound <- 0
+upper_x_bound <- 10000
+lower_y_bound <- 0
+upper_y_bound <- 10000
+units <- "m"
+
+density_grid_spacing <- 500
+design_spacing <- 1000
+true_N <- 1000
+scale_parameter <- 500
+trunc_dist <- 1000
+
+points_or_lines <- "point" # Switch to "point" to test point transects
+visits <- 1
+bootstrap_reps <- 10
+
+my_hotspots <- list(
+  list(centre = c(2000, 8000), sigma = 800, amplitude = 1.2),
+  list(centre = c(5000, 2000), sigma = 6000, amplitude = 0.5),
+  list(centre = c(8000, 9000), sigma = 1000, amplitude = 2)
+)
+```
+
+# Delta Function
+
+```{r}
+# Delta Method Helper Function used later
+apply_delta <- function(var_ER, erhat, N_hat, D_hat, cv_Pa_sq) {
+  cv_ER_sq <- var_ER / (erhat^2)
+  var_N <- (N_hat^2) * (cv_ER_sq + cv_Pa_sq)
+  var_D <- (D_hat^2) * (cv_ER_sq + cv_Pa_sq)
+  list(
+    var_N = var_N, 
+    var_D = var_D,
+    se_N = sqrt(max(0, var_N)), 
+    se_D = sqrt(max(0, var_D))
+  )
+}
+
+```
+
+# Region
+
+```{r}
+region_sf <- sf::st_bbox(c(xmin = lower_x_bound, xmax = upper_x_bound, 
+                           ymin = lower_y_bound, ymax = upper_y_bound)) |> 
+  sf::st_as_sfc() |> 
+  sf::st_as_sf()
+
+region <- make.region(region.name = "region",
+                      shape = region_sf,
+                      units = units)
+```
+
+# Density and population
+
+```{r}
+# Create basic uniform density
+density_true_init <- make.density(region = region,
+                                  x.space = density_grid_spacing,
+                                  constant = 1)
+
+# Add iterative hotspots
+for (hotspot in my_hotspots) {
+  density_true_init <- add.hotspot(object = density_true_init,
+                                   centre = hotspot$centre,
+                                   sigma = hotspot$sigma,
+                                   amplitude = hotspot$amplitude)
+}
+
+x_space <- density_true_init@x.space
+
+# Scale density so exactly N animals are expected
+density_surface_true <- density_true_init@density.surface[[1]] |>
+  mutate(
+    area = as.numeric(sf::st_area(geometry)),
+    density = density * true_N / sum(density * area) 
+  ) |>
+  select(strata, density, x, y, geometry)
+
+density_true <- make.density(region = region,
+                             x.space = x_space,
+                             density.surface = density_surface_true)
+
+pop.desc_true <- make.population.description(region = region,
+                                             density = density_true,
+                                             N = true_N,
+                                             fixed.N = TRUE)
+
+detect_true <- make.detectability(key.function = "hn",
+                                  scale.param = scale_parameter,
+                                  truncation = trunc_dist)
+
+realized_population <- generate.population(object = pop.desc_true,
+                                           detectability = detect_true,
+                                           region = region)
+```
+
+# Survey data
+
+```{r}
+design <- make.design(region = region,
+                      transect.type = points_or_lines, 
+                      design = "systematic",
+                      spacing = design_spacing,
+                      edge.protocol = "minus",
+                      truncation = trunc_dist)
+
+transects <- generate.transects(design)
+
+if (points_or_lines == "line") {
+  survey <- new("Survey.LT", population = realized_population, 
+                transect = transects, perp.truncation = trunc_dist)
+} else {
+  survey <- new("Survey.PT", population = realized_population, 
+                transect = transects, rad.truncation = trunc_dist)
+}
+
+observed_survey <- run.survey(survey, region = region)
+dist_data <- observed_survey@dist.data
+samplers <- transects@samplers
+
+obsdata_raw <- dist_data |> filter(!is.na(distance))
+```
+
+# Data Wrangling
+
+```{r}
+if (points_or_lines == "line") {
+  # Segment length constraint
+  segment_length <- trunc_dist
+  segdata_list <- list()
+  new_labels <- character(nrow(obsdata_raw))
+  
+  for (i in seq_len(nrow(samplers))) {
+    geom <- samplers$geometry[i]
+    tr_label <- as.character(samplers$transect[i])
+    L_line <- as.numeric(sf::st_length(geom))
+    
+    num_segs <- max(1, round(L_line / segment_length))
+    eff <- L_line / num_segs
+    
+    fractions <- (seq_len(num_segs) - 0.5) / num_segs
+    cents <- sf::st_line_sample(geom, sample = fractions)
+    cents_xy <- sf::st_coordinates(cents)
+    
+    temp_seg <- data.frame(
+      Sample.Label = paste0(tr_label, "_", seq_len(num_segs)),
+      Effort = eff,
+      x = cents_xy[, "X"],
+      y = cents_xy[, "Y"],
+      orig_transect = tr_label,
+      stringsAsFactors = FALSE
+    )
+    segdata_list[[i]] <- temp_seg
+    
+    obs_idx <- which(as.character(obsdata_raw$Sample.Label) == tr_label)
+    if (length(obs_idx) > 0) {
+      for (j in obs_idx) {
+        obs_x <- obsdata_raw$x[j]
+        obs_y <- obsdata_raw$y[j]
+        dists <- sqrt((temp_seg$x - obs_x)^2 + (temp_seg$y - obs_y)^2)
+        best_seg <- which.min(dists)
+        new_labels[j] <- temp_seg$Sample.Label[best_seg]
+      }
+    }
+  }
+  
+  segdata <- bind_rows(segdata_list) |> arrange(x, y) |> 
+    select(Sample.Label, Effort, x, y, orig_transect)
+  
+  obsdata <- obsdata_raw
+  obsdata$Sample.Label <- new_labels
+  obsdata <- obsdata |> mutate(object = as.character(object), size = 1) |> 
+    select(object, Sample.Label, size, distance)
+  
+} else { # Point Transects
+  sampler_xy <- sf::st_coordinates(samplers)
+  segdata <- samplers |> sf::st_drop_geometry() |>
+    mutate(
+      Sample.Label = as.character(transect),
+      Effort = if(length(visits)==1) rep(visits, nrow(samplers)) else visits,
+      x = sampler_xy[, "X"],
+      y = sampler_xy[, "Y"]
+    ) |>
+    arrange(x, y) |> select(Sample.Label, Effort, x, y)
+  
+  obsdata <- obsdata_raw |> mutate(object = as.character(object), 
+                                   Sample.Label = as.character(Sample.Label), 
+                                   size = 1) |>
+    select(object, Sample.Label, size, distance)
+}
+```
+
+# ds() model
+
+```{r}
+m1 <- ds(data = dist_data, transect = points_or_lines, key = "hn", 
+         adjustment = NULL, truncation = trunc_dist, quiet = TRUE)
+
+N_hat <- as.numeric(m1$dht$individuals$N$Estimate)
+sigma_hat <- as.numeric(exp(coef(m1$ddf)$scale["(Intercept)", "estimate"]))
+
+cv_p_val <- m1$dht$individuals$summary$cv.p[1]
+if (!is.null(cv_p_val) && length(cv_p_val) > 0) {
+  cv_Pa_sq <- (as.numeric(cv_p_val))^2
+} else {
+  ddf_sum <- summary(m1$ddf)
+  cv_Pa_sq <- (ddf_sum$average.p.se / ddf_sum$average.p)^2
+}
+
+```
+
+# 2009 Variances
+
+```{r}
+Region_Area <- as.numeric(sf::st_area(region@region))
+D_hat <- N_hat / Region_Area
+
+obs_counts <- obsdata |> group_by(Sample.Label) |> 
+  summarize(count = sum(size), .groups = "drop")
+
+if (points_or_lines == "line") {
+  effort_data <- segdata |> left_join(obs_counts, by = "Sample.Label") |> 
+    mutate(count = replace_na(count, 0)) |> group_by(orig_transect) |> 
+    summarize(count = sum(count), Effort = sum(Effort), x = mean(x), .groups = "drop") |> 
+    arrange(x) 
+} else {
+  effort_data <- segdata |> left_join(obs_counts, by = "Sample.Label") |> 
+    mutate(count = replace_na(count, 0))
+}
+
+nspotted <- effort_data$count
+lvec <- effort_data$Effort
+L <- sum(lvec)
+k <- length(lvec) 
+ntot <- sum(nspotted)
+erhat_obs <- ntot / L
+
+
+
+
+
+analytical_variances <- list()
+
+if (points_or_lines == "line") {
+  # Empirical Estimators (R2, R3, S1, S2, O1, O2)
+  var.R2 <- (k * sum(lvec^2 * (nspotted/lvec - ntot/L)^2)) / (L^2 * (k - 1))
+  var.R3 <- 1 / (L * (k - 1)) * sum(lvec * (nspotted/lvec - ntot/L)^2)
+  
+  H_strat <- floor(k/2)
+  k.h <- rep(2, H_strat)
+  if(k %% 2 > 0) k.h[H_strat] <- 3
+  end.strat <- cumsum(k.h)
+  begin.strat <- cumsum(k.h) - k.h + 1
+  
+  sum.S1 <- 0; sum.S2 <- 0
+  for(h in 1:H_strat) {
+    n.strat <- nspotted[begin.strat[h]:end.strat[h]]
+    l.strat <- lvec[begin.strat[h]:end.strat[h]]
+    nbar.strat <- mean(n.strat)
+    lbar.strat <- mean(l.strat)
+    
+    inner.S1 <- sum((n.strat - nbar.strat - (ntot/L) * (l.strat - lbar.strat))^2)
+    sum.S1 <- sum.S1 + k.h[h] / (k.h[h] - 1) * inner.S1
+    
+    L.strat <- sum(l.strat)
+    var.strat.S2 <- k.h[h] / (L.strat^2 * (k.h[h] - 1)) * sum(l.strat^2 * (n.strat/l.strat - nbar.strat/lbar.strat)^2)
+    sum.S2 <- sum.S2 + L.strat^2 * var.strat.S2
+  }
+  var.S1 <- sum.S1 / L^2
+  var.S2 <- sum.S2 / L^2
+  
+  lvec.1 <- lvec[-k]; lvec.2 <- lvec[-1]
+  nvec.1 <- nspotted[-k]; nvec.2 <- nspotted[-1]
+  ervec.1 <- nvec.1/lvec.1; ervec.2 <- nvec.2/lvec.2
+  
+  var.O1 <- k / (2 * L^2 * (k - 1)) * sum((nvec.1 - nvec.2 - ntot/L * (lvec.1 - lvec.2))^2)
+  var.O2 <- (2 * k) / (L^2 * (k - 1)) * sum(((lvec.1 * lvec.2)/(lvec.1 + lvec.2))^2 * (ervec.1 - ervec.2)^2)
+  
+  analytical_variances$R2 <- apply_delta(var.R2, erhat_obs, N_hat, D_hat, cv_Pa_sq)
+  analytical_variances$R3 <- apply_delta(var.R3, erhat_obs, N_hat, D_hat, cv_Pa_sq)
+  analytical_variances$S1 <- apply_delta(var.S1, erhat_obs, N_hat, D_hat, cv_Pa_sq)
+  analytical_variances$S2 <- apply_delta(var.S2, erhat_obs, N_hat, D_hat, cv_Pa_sq)
+  analytical_variances$O1 <- apply_delta(var.O1, erhat_obs, N_hat, D_hat, cv_Pa_sq)
+  analytical_variances$O2 <- apply_delta(var.O2, erhat_obs, N_hat, D_hat, cv_Pa_sq)
+  
+} else {
+  nvec <- effort_data$count
+  tvec <- effort_data$Effort
+  k <- length(tvec)
+  T_eff <- sum(tvec)
+  
+  erhat_P2 <- mean(nvec / tvec)
+  erhat_P3 <- sum(nvec) / T_eff
+  
+  var.P2 <- (1 / (k * (k - 1))) * sum((nvec / tvec - erhat_P2)^2)
+  var.P3 <- (1 / (T_eff * (k - 1))) * sum(tvec * (nvec / tvec - erhat_P3)^2)
+  
+  analytical_variances$P2 <- apply_delta(var.P2, erhat_obs, N_hat, D_hat, cv_Pa_sq)
+  analytical_variances$P3 <- apply_delta(var.P3, erhat_obs, N_hat, D_hat, cv_Pa_sq)
+}
+```
+
+# dsm() model
+
+```{r}
+if (nrow(obsdata) > 0) {
+  dsm1 <- dsm(count ~ s(x, y), ddf.obj = m1, segment.data = segdata, 
+              observation.data = obsdata, family = quasipoisson(link = "log"), 
+              method = "REML", convert.units = 1)
+  
+  prediction_grid <- make.density(region = region, x.space = density_grid_spacing, 
+                                  y.space = density_grid_spacing, constant = 1)
+  pred_grid <- prediction_grid@density.surface[[1]] |> 
+    mutate(area = as.numeric(sf::st_area(geometry)))
+  
+  pred_data <- sf::st_drop_geometry(pred_grid)
+  predictions <- pmax(as.numeric(predict(dsm1, newdata = pred_data, 
+                                         off.set = pred_grid$area, type = "response")), 0)
+  
+  pred_grid <- pred_grid |> mutate(N_hat_pred = replace_na(predictions, 0))
+  total_pred <- sum(pred_grid$N_hat_pred)
+  
+  if (total_pred > 0) {
+    pred_grid <- pred_grid |> mutate(N_hat_pred = N_hat_pred * N_hat / total_pred)
+  } else {
+    pred_grid <- pred_grid |> mutate(N_hat_pred = 0)
+  }
+  
+  pred_grid <- pred_grid |> mutate(
+    density = if_else(area > 0, N_hat_pred / area, 0),
+    density = pmax(density, .Machine$double.eps),
+    density = if_else(is.na(density) | is.nan(density), .Machine$double.eps, density)
+  )
+  
+  est.density <- make.density(region = region, x.space = density_grid_spacing, 
+                              y.space = density_grid_spacing, density.surface = pred_grid)
+  
+  pop.desc_est <- make.population.description(region = region, density = est.density, 
+                                              N = N_hat, fixed.N = TRUE)
+  
+  if (points_or_lines == "line") {
+    dsm_surface <- pred_grid |> group_by(strata, x) |> 
+      summarize(
+        N_hat_pred = sum(N_hat_pred, na.rm = TRUE), 
+        area = sum(area, na.rm = TRUE),
+        geometry = sf::st_union(geometry),
+        .groups = "drop"
+      ) |>
+      mutate(
+        density = if_else(area > 0, N_hat_pred / area, 0),
+        density = pmax(density, .Machine$double.eps),
+        density = if_else(is.na(density) | is.nan(density), .Machine$double.eps, density),
+        y = 0
+      ) |> select(strata, density, x, y, N_hat_pred, area, geometry)
+  } else {
+    dsm_surface <- pred_grid |> select(strata, density, x, y, N_hat_pred, area, geometry)
+  }
+}
+```
+
+# Striplet/boxlet
+
+```{r}
+spatial_variances <- list()
+
+if (nrow(obsdata) > 0) {
+  if (points_or_lines == "line") {
+    muvec <- dsm_surface$N_hat_pred 
+    midvec <- dsm_surface$x
+    
+    musum_raw <- sum(muvec, na.rm = TRUE)
+    if(musum_raw > 0) muvec <- muvec * (N_hat / musum_raw)
+    musum <- sum(muvec, na.rm = TRUE) 
+    
+    bbox <- sf::st_bbox(region@region)
+    y_length <- as.numeric(bbox["ymax"] - bbox["ymin"])
+    x_min <- as.numeric(bbox["xmin"])
+    x_max <- as.numeric(bbox["xmax"])
+    
+    cell_width <- density_grid_spacing
+    if (is.na(cell_width) || cell_width <= 0) cell_width <- 1
+    
+    B <- 50 
+    bvec <- seq(0, design_spacing, length.out = B)
+    Lbvec <- rep(0, B)
+    Abvec <- rep(0, B)
+    
+    for (b_idx in 1:B) {
+      b_val <- bvec[b_idx]
+      lines_grid <- seq(x_min + b_val, x_max, by = design_spacing)
+      
+      line_strings <- lapply(lines_grid, function(x_val) {
+        sf::st_linestring(matrix(c(x_val, bbox["ymin"], x_val, bbox["ymax"]), ncol = 2, byrow = TRUE))
+      })
+      
+      lines_sf <- sf::st_sfc(line_strings, crs = sf::st_crs(region@region))
+      clipped_lines <- suppressWarnings(sf::st_intersection(lines_sf, region@region))
+      Lbvec[b_idx] <- as.numeric(sum(sf::st_length(clipped_lines)))
+      
+      nearest_line <- sapply(midvec, function(m) lines_grid[which.min(abs(m - lines_grid))])
+      signed_dist <- midvec - nearest_line
+      
+      lower_bound <- signed_dist - cell_width / 2
+      upper_bound <- signed_dist + cell_width / 2
+      
+      lower_bound_clamped <- pmax(lower_bound, -trunc_dist)
+      upper_bound_clamped <- pmin(upper_bound, trunc_dist)
+      
+      integral_val <- sqrt(2 * pi) * sigma_hat * pmax(0, 
+         pnorm(upper_bound_clamped, mean = 0, sd = sigma_hat) - 
+         pnorm(lower_bound_clamped, mean = 0, sd = sigma_hat))
+      
+      g_b <- integral_val / cell_width
+      Abvec[b_idx] <- sum(muvec * g_b, na.rm = TRUE)
+    }
+    
+    var_ER_striplet <- mean((Abvec + (Abvec^2) * (1 - 1/musum)) / (Lbvec^2), na.rm = TRUE) - 
+      (mean(Abvec / Lbvec, na.rm = TRUE))^2
+    erhat_striplet <- mean(Abvec / Lbvec, na.rm = TRUE)
+    
+    delta_striplet <- apply_delta(var_ER_striplet, erhat_striplet, N_hat, D_hat, cv_Pa_sq)
+    spatial_variances$striplet <- delta_striplet
+    
+  } else if (points_or_lines == "point") {
+    
+    grid_cells <- 50 
+    region_sf <- region@region
+    region_bbox <- sf::st_bbox(region_sf)
+    
+    x_range <- as.numeric(region_bbox["xmax"] - region_bbox["xmin"])
+    y_range <- as.numeric(region_bbox["ymax"] - region_bbox["ymin"])
+    max_range <- max(x_range, y_range)
+    square_dim <- max_range / grid_cells
+    
+    boxlets <- sf::st_make_grid(region_sf, cellsize = c(square_dim, square_dim), square = TRUE)
+    boxlets_sf <- sf::st_sf(geometry = boxlets) |> dplyr::mutate(box_id = dplyr::row_number())
+    
+    boxlet_cents <- sf::st_centroid(boxlets_sf)
+    inside_region <- sf::st_intersects(boxlet_cents, region_sf, sparse = FALSE)[, 1]
+    boxlets_sf <- boxlets_sf[inside_region, ]
+    
+    boxlets_sf <- boxlets_sf |> dplyr::mutate(area = as.numeric(sf::st_area(geometry)))
+    boxlet_coords <- sf::st_coordinates(sf::st_centroid(boxlets_sf))
+    boxlets_sf$x <- boxlet_coords[, "X"]
+    boxlets_sf$y <- boxlet_coords[, "Y"]
+    
+    pred_data_box <- sf::st_drop_geometry(boxlets_sf)
+    pred_N <- predict(dsm1, newdata = pred_data_box, off.set = pred_data_box$area, type = "response")
+    p_j <- pred_N / sum(pred_N, na.rm = TRUE)
+    p_j[is.na(p_j) | p_j < 0] <- 0 
+    
+    fitted_probs <- m1$ddf$fitted
+    if (is.null(fitted_probs) || length(fitted_probs) == 0) {
+      P_a <- summary(m1$ddf)$average.p
+    } else {
+      P_a <- length(fitted_probs) / sum(1 / fitted_probs)
+    }
+    
+    shift_res <- design_spacing / 5 
+    shifts <- expand.grid(x = seq(0, design_spacing - shift_res, by = shift_res), 
+                          y = seq(0, design_spacing - shift_res, by = shift_res))
+    B <- nrow(shifts) 
+    A_b <- numeric(B)
+    
+    base_grid <- expand.grid(
+      X = seq(region_bbox["xmin"] - design_spacing, 
+              region_bbox["xmax"] + design_spacing, by = design_spacing),
+      Y = seq(region_bbox["ymin"] - design_spacing, 
+              region_bbox["ymax"] + design_spacing, by = design_spacing)
+    )
+    
+    for (i in 1:B) {
+      shifted_grid <- base_grid
+      shifted_grid$X <- shifted_grid$X + shifts$x[i]
+      shifted_grid$Y <- shifted_grid$Y + shifts$y[i]
+      
+      shifted_points <- sf::st_as_sf(shifted_grid, coords = c("X", "Y"))
+      shifted_buffers <- sf::st_buffer(shifted_points, dist = trunc_dist)
+      shifted_survey_area <- sf::st_union(shifted_buffers)
+      
+      active_boxlets <- sf::st_intersects(sf::st_centroid(boxlets_sf), shifted_survey_area, sparse = FALSE)[, 1]
+      Q_b <- sum(p_j[active_boxlets], na.rm = TRUE) * P_a
+      A_b[i] <- N_hat * Q_b
+    }
+    
+    mean_A <- mean(A_b)
+    var_n_boxlet <- max(0, (1/B) * sum(A_b + (A_b^2) * (1 - 1/N_hat)) - mean_A^2)
+    
+    k_points <- nrow(segdata)
+    erhat_boxlet <- mean_A / k_points
+    var_ER_boxlet <- var_n_boxlet / (k_points^2)
+    
+    delta_boxlet <- apply_delta(var_ER_boxlet, erhat_boxlet, N_hat, D_hat, cv_Pa_sq)
+    spatial_variances$boxlet <- delta_boxlet
+  }
+}
+```
+
+# Monte Carlo method
+
+```{r}
+analyses <- make.ds.analysis(dfmodel = ~ 1, key = "hn", truncation = trunc_dist, criteria = "AIC")
+
+# --- Bootstrap 1: Standard ---
+sim_obj <- make.simulation(reps = bootstrap_reps, design = design, 
+                           population.description = pop.desc_est, 
+                           detectability = detect_true, ds.analysis = analyses)
+
+sim_run <- run.simulation(sim_obj)
+N_hat_results_std <- as.numeric(sim_run@results[["individuals"]][["N"]][1, "Estimate", seq_len(bootstrap_reps)])
+
+
+# --- Bootstrap 2: Inverse CDF (QMC/Sobol) ---
+density_surface_est <- pop.desc_est@density@density.surface[[1]] |> mutate(N_expected = density * area)
+N_total_est <- as.integer(round(pop.desc_est@N))
+
+marg_x <- density_surface_est |> group_by(x) |> summarize(N_x = sum(N_expected, na.rm = TRUE), .groups = "drop") |>
+  mutate(prob_x = N_x / sum(N_x), cdf_x = cumsum(prob_x))
+
+cond_y_list <- density_surface_est |> group_by(x) |>
+  mutate(prob_y = N_expected / sum(N_expected, na.rm = TRUE), cdf_y = cumsum(prob_y)) |> split(~x)
+
+dummy_density <- dsims::make.density(region = region, x.space = design_spacing, constant = 1)
+dummy_pop_desc <- dsims::make.population.description(region = region, density = dummy_density, N = N_total_est, fixed.N = TRUE)
+
+N_hat_results_invcdf <- rep(NA, bootstrap_reps)
+
+for (b in 1:bootstrap_reps) {
+  U <- sobol(n = N_total_est, d = 2, randomize = "Owen", seed = b)
+  animal_x <- numeric(N_total_est)
+  animal_y <- numeric(N_total_est)
+
+  for (i in 1:N_total_est) {
+    x_idx <- which(marg_x$cdf_x >= U[i, 1])[1]
+    exact_x <- marg_x$x[x_idx]
+    animal_x[i] <- exact_x
+
+    y_dist <- cond_y_list[[as.character(exact_x)]]
+    y_idx <- which(y_dist$cdf_y >= U[i, 2])[1]
+    animal_y[i] <- y_dist$y[y_idx]
+  }
+
+  pop_b <- generate.population(object = dummy_pop_desc, detectability = detect_true, region = region)
+  native_pop <- pop_b@population
+  native_pop$x <- animal_x
+  native_pop$y <- animal_y
+  pop_b@population <- as.data.frame(native_pop)
+
+  trans_b <- generate.transects(design)
+  if (points_or_lines == "point") {
+    survey_b <- new("Survey.PT", population = pop_b, transect = trans_b, rad.truncation = trunc_dist)
+  } else {
+    survey_b <- new("Survey.LT", population = pop_b, transect = trans_b, perp.truncation = trunc_dist)
+  }
+
+  obs_data_b <- suppressWarnings(run.survey(survey_b, region = region))@dist.data
+
+  if (nrow(obs_data_b) > 0) {
+    tryCatch({
+      capture.output(m2 <- ds(data = obs_data_b, transect = points_or_lines, key = "hn",
+                              adjustment = NULL, truncation = trunc_dist, quiet = TRUE))
+      N_hat_results_invcdf[b] <- as.numeric(m2$dht$individuals$N$Estimate)
+    }, error = function(e) N_hat_results_invcdf[b] <- NA)
+  }
+}
+
+
+# --- Bootstrap 3: Discretized Density ---
+prob_vec <- density_surface_est$N_expected / sum(density_surface_est$N_expected, na.rm = TRUE)
+cell_dimensions <- sqrt(density_surface_est$area)
+
+N_hat_results_disc <- rep(NA, bootstrap_reps)
+
+for (b in 1:bootstrap_reps) {
+  cell_counts <- as.vector(rmultinom(n = 1, size = N_total_est, prob = prob_vec))
+  
+  base_x <- rep(density_surface_est$x, cell_counts)
+  base_y <- rep(density_surface_est$y, cell_counts)
+  base_sizes <- rep(cell_dimensions, cell_counts)
+  
+  animal_x <- base_x + runif(N_total_est, min = -base_sizes/2, max = base_sizes/2)
+  animal_y <- base_y + runif(N_total_est, min = -base_sizes/2, max = base_sizes/2)
+  
+  pop_c <- generate.population(object = dummy_pop_desc, detectability = detect_true, region = region)
+  native_pop <- pop_c@population
+  native_pop$x <- animal_x
+  native_pop$y <- animal_y
+  pop_c@population <- as.data.frame(native_pop)
+  
+  trans_c <- generate.transects(design)
+  if (points_or_lines == "point") {
+    survey_c <- new("Survey.PT", population = pop_c, transect = trans_c, rad.truncation = trunc_dist)
+  } else {
+    survey_c <- new("Survey.LT", population = pop_c, transect = trans_c, perp.truncation = trunc_dist)
+  }
+  
+  obs_data_c <- suppressWarnings(run.survey(survey_c, region = region))@dist.data
+  
+  if (nrow(obs_data_c) > 0) {
+    tryCatch({
+      capture.output(m3 <- ds(data = obs_data_c, transect = points_or_lines, key = "hn", 
+                              adjustment = NULL, truncation = trunc_dist, quiet = TRUE))
+      N_hat_results_disc[b] <- as.numeric(m3$dht$individuals$N$Estimate)
+    }, error = function(e) N_hat_results_disc[b] <- NA)
+  }
+}
+```
+
+# Results Table
+
+```{r}
+# Helper to safely extract se_N (returns NA if the estimator wasn't run)
+safe_extract <- function(lst, path1, path2 = "se_N") {
+  if (!is.null(lst[[path1]]) && !is.null(lst[[path1]][[path2]])) {
+    return(lst[[path1]][[path2]])
+  } else {
+    return(NA_real_)
+  }
+}
+
+# Compile all standard errors into a data frame
+variance_summary <- data.frame(
+  Estimator = c(
+    "Analytical: R2", "Analytical: R3", "Analytical: S1", 
+    "Analytical: S2", "Analytical: O1", "Analytical: O2",
+    "Analytical: P2", "Analytical: P3",
+    "Spatial: Striplet", "Spatial: Boxlet",
+    "Bootstrap: Standard", "Bootstrap: InvCDF", "Bootstrap: Discretized"
+  ),
+  SE_N = c(
+    safe_extract(analytical_variances, "R2"),
+    safe_extract(analytical_variances, "R3"),
+    safe_extract(analytical_variances, "S1"),
+    safe_extract(analytical_variances, "S2"),
+    safe_extract(analytical_variances, "O1"),
+    safe_extract(analytical_variances, "O2"),
+    safe_extract(analytical_variances, "P2"),
+    safe_extract(analytical_variances, "P3"),
+    safe_extract(spatial_variances, "striplet"),
+    safe_extract(spatial_variances, "boxlet"),
+    sd(N_hat_results_std, na.rm = TRUE),
+    sd(N_hat_results_invcdf, na.rm = TRUE),
+    sd(N_hat_results_disc, na.rm = TRUE)
+  )
+)
+
+# Filter out the NAs so it only shows relevant estimators for the active design
+final_table <- variance_summary |> 
+  filter(!is.na(SE_N)) |>
+  mutate(SE_N = round(SE_N, 2))
+
+cat("\n=== Variance Summary Table (SE of N_hat) ===\n")
+cat("Base Abundance Estimate (N_hat):", round(N_hat, 2), "\n\n")
+print(final_table, row.names = FALSE)
+cat("============================================\n")
+```
+

@@ -1,5 +1,5 @@
 ---
-title: "Analysis Template 3"
+title: "Analysis Template 4"
 format: html
 ---
 
@@ -21,7 +21,7 @@ library(qrng)
 # Import Functions
 
 ```{r}
-source(here::here("Functions3.R"))
+source(here::here("Functions4.R"))
 ```
 
 # Constants
@@ -146,7 +146,7 @@ standard <- get_bootstrap(region = region,
                           sigma_hat = ds_results$sigma_hat,
                           transect_type = points_or_lines,
                           reps = bootstrap_reps,
-                          angle = design_angle,
+                          # angle = design_angle,
                           spacing = design_spacing,
                           truncation = trunc_dist
 )
@@ -174,15 +174,14 @@ sd(standard$N_hat, na.rm = TRUE)
 ```
 
 ```{r}
-disc_density <- get_bootstrap_disc_density(
-  region = region,
-  population_description = dsm_results$population_description,
-  sigma_hat = ds_results$sigma_hat,
-  transect_type = points_or_lines,
-  reps = bootstrap_reps,
-  angle = design_angle,
-  spacing = design_spacing,
-  truncation = trunc_dist
+disc_density <- get_bootstrap_disc_density(region = region,
+                                           population_description = dsm_results$population_description,
+                                           sigma_hat = ds_results$sigma_hat,
+                                           transect_type = points_or_lines,
+                                           reps = bootstrap_reps,
+                                           # angle = design_angle,
+                                           spacing = design_spacing,
+                                           truncation = trunc_dist
 )
 
 sd(disc_density$N_hat, na.rm = TRUE)

@@ -4,7 +4,7 @@ library(future)
 library(furrr)
 library(parallel)
 
-source(here::here("Functions3.R"))
+source(here::here("Functions4.R"))
 
 # Setup Constants & Scenario Grid -----
 
@@ -15,18 +15,11 @@ lower_y <- 0; upper_y <- 5000
 # Simulation constants
 true_N <- 1000
 density_grid_spacing <- 100
-scale_parameter <- 100
-trunc_dist <- 200
+scale_parameter <- 25
+trunc_dist <- 80
 design_angle <- 0
-MAX_BOOT_REPS <- 1000
+MAX_BOOT_REPS <- 200
 design_spacing <- 500
-
-# Density with hotspots
-# hotspots_single <- list(
-#   list(centre = c(2000, 2000), sigma = 500, amplitude = 5),
-#   list(centre = c(8000, 8000), sigma = 500, amplitude = 5),
-#   list(centre = c(2000, 8000), sigma = 500, amplitude = 5)
-# )
 
 # Uniform density
 my_hotspots <- list(
@@ -72,7 +65,7 @@ test_detectability <- test_sim_truth$detectability
 test_survey <- survey_data(
   region = test_region,
   realized_population = test_sim_truth$population,
-  angle = design_angle,
+  # angle = design_angle,
   transect_type = test_transect_type,
   spacing = design_spacing,
   truncation = trunc_dist
@@ -105,9 +98,6 @@ test_sim <- make.simulation(reps = 3,
 test_survey <- run.survey(test_sim)
 
 plot(test_survey, test_region)
-
-# plot(test_survey$transects@samplers$geometry)
-# plot(region@region$geometry, add = TRUE)
 
 density_sf <- test_density_true@density.surface[[1]]
 
@@ -155,7 +145,7 @@ evaluate_convergence <- function(transect_type, boot_method) {
   sim_survey <- survey_data(
     region = region,
     realized_population = sim_truth$population,
-    angle = design_angle,
+    # angle = design_angle,
     transect_type = transect_type,
     spacing = design_spacing,
     truncation = trunc_dist
@@ -185,17 +175,18 @@ evaluate_convergence <- function(transect_type, boot_method) {
   # Run each bootstrap function
   boot_func <- switch(boot_method,
                       "Standard" = get_bootstrap,
-                      # "InvCDF"   = get_bootstrap_invcdf,
                       "Discrete" = get_bootstrap_disc_density
   )
   
-  # Pass the targeted outputs from the new split functions
+  # UPDATE: Added spacing and truncation to align with Functions4.R signature
   boot_res <- boot_func(
     region = region,
     population_description = dsm_results$population_description,
     sigma_hat = ds_results$sigma_hat,
     transect_type = transect_type,
-    reps = MAX_BOOT_REPS
+    reps = MAX_BOOT_REPS,
+    spacing = design_spacing, # Updated for Functions4.R
+    truncation = trunc_dist   # Updated for Functions4.R
   )
   
   # 5. Calculate cumulative standard deviation

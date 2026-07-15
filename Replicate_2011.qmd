@@ -21,7 +21,7 @@ library(future)
 # Import Functions
 
 ```{r}
-source(here::here("Functions3.R"))
+source(here::here("Functions4.R"))
 ```
 
 # Constants
@@ -29,18 +29,18 @@ source(here::here("Functions3.R"))
 ```{r}
 true_N <- 5000
 
-points_or_lines = "line"
+points_or_lines = "point"
 
-trunc_dist <- 40
-scale_parameter <- 15
-design_spacing <- 500
+trunc_dist <- 200
+scale_parameter <- 120
+design_spacing <- 1000
 
 density_grid_spacing <- 100
 
-design_angle <- 0
-bootstrap_reps <- 20
+# design_angle <- 0
+bootstrap_reps <- 10
 
-outer_loop_reps <- 5
+outer_loop_reps <- 50
 ```
 
 # Code
@@ -149,7 +149,6 @@ test_detectability <- test_sim_truth$detectability
 test_survey <- survey_data(
   region = region,
   realized_population = test_sim_truth$population,
-  angle = design_angle,
   transect_type = points_or_lines,
   spacing = design_spacing,
   truncation = trunc_dist
@@ -191,7 +190,7 @@ test_ds$ds_model$dht$individuals
 
 ## For each region:
 
-```{r, echo=FALSE}
+```{r, echo=FALSE, message=FALSE}
 num_cores <- max(1, parallel::detectCores() - 2)
 plan(multisession, workers = num_cores)
 
@@ -427,26 +426,20 @@ desired_order <- c(
 
 plot_dat <- sim_results |>
   pivot_longer(
-    cols = c(
-      se_R2,
-      se_R3,
-      se_S1,
-      se_S2,
-      se_O1,
-      se_O2,
-      se_P2,
-      se_P3,
-      se_striplet,
-      se_boxlet,
-      se_boot_std,
-      se_boot_disc
-    )
+    cols = all_of(desired_order),
+    values_drop_na = TRUE # This silently removes the 600 NA rows
   ) |>
   mutate(name = factor(name, levels = desired_order))
 
+plot_dat <- plot_dat |>
+  group_by(scenario) |>
+  mutate(true_ish_se = sd(N_hat))
+
 ggplot(plot_dat, aes(x = name, y = value)) +
   geom_boxplot() +
+  geom_hline(aes(yintercept = true_ish_se), color = "red", linetype = "dashed", linewidth = 0.8) +
   facet_grid(rows = vars(scenario)) +
+  scale_x_discrete(drop = TRUE) +
   theme_bw()
 ```
 

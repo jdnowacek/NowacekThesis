@@ -174,7 +174,7 @@ survey_data <- function(region,
     # split transects into segments (using grid spacing as a starting value)
     
     # segment_length <- y_space/3
-    segment_length <- trunc_dist # maybe twice the truncation distance?
+    segment_length <- truncation 
     
     segdata_list <- list()
     
@@ -490,7 +490,6 @@ fit_ds <- function(region,
     delta_P2 <- apply_delta(var.P2, erhat_obs)
     delta_P3 <- apply_delta(var.P3, erhat_obs)
     
-    # Bundle all variances into a comprehensive flat list
     analytical_variances <- list(
       var_ER_P2 = var.P2,
       var_ER_P3 = var.P3,
@@ -541,7 +540,7 @@ fit_dsm_and_surface <- function(obsdata,
     convert.units = 1
   )
   
-  # 2. Create prediction grid
+  # Create prediction grid
   prediction_grid <- make.density(
     region = region,
     x.space = x_space,
@@ -556,7 +555,7 @@ fit_dsm_and_surface <- function(obsdata,
   
   pred_data <- sf::st_drop_geometry(pred_grid)
   
-  # 3. Predict the surface
+  # Predict the surface
   predictions <- predict(
     dsm1,
     newdata = pred_data,
@@ -594,7 +593,7 @@ fit_dsm_and_surface <- function(obsdata,
                         density)
     )
   
-  # 4. Generate dsims S4 Objects
+  # Generate dsims S4 Objects
   est.density <- make.density(
     region = region,
     x.space = x_space,
@@ -609,7 +608,7 @@ fit_dsm_and_surface <- function(obsdata,
     fixed.N = TRUE
   )
   
-  # 5. Build the final dsm_surface object  
+  # Build the final dsm_surface object  
   if (transect_type == "line") {
     dsm_surface <- pred_grid |> 
       group_by(strata, x) |> 
@@ -634,7 +633,7 @@ fit_dsm_and_surface <- function(obsdata,
       select(strata, density, x, y, N_hat_pred, area, geometry)
   }
   
-  # 6. Return comprehensive list needed for downstream simulation
+  
   list(
     dsm = dsm1,
     obsdata = obsdata, 
@@ -767,6 +766,7 @@ striplet_boxlet <- function(region,
     # Boxlet variance estimator
     
     grid_cells <- 50 # Target number of boxlets along the longest axis
+    ##### maybe better to just use the existing density grid?
     
     # tessellate the region to create boxlets
     region_sf <- region@region
@@ -849,6 +849,32 @@ striplet_boxlet <- function(region,
                     spacing, region_bbox["ymax"] + spacing, by = spacing)
     
     base_grid <- expand.grid(X = base_x, Y = base_y)
+    
+    # # Draft of Fewster method: boxlets weighted by area of the boxlet inside
+    # # the truncation ring
+    # for (i in 1:B) {
+    #   shifted_grid <- base_grid
+    #   shifted_grid$X <- shifted_grid$X + shifts$x[i]
+    #   shifted_grid$Y <- shifted_grid$Y + shifts$y[i]
+    #   
+    #   shifted_points <- sf::st_as_sf(shifted_grid, coords = c("X", "Y"), crs = sf::st_crs(boxlets_sf))
+    #   shifted_buffers <- sf::st_buffer(shifted_points, dist = truncation)
+    #   shifted_survey_area <- sf::st_union(shifted_buffers)
+    #   
+    #   touching_idx <- unlist(sf::st_intersects(boxlets_sf, shifted_survey_area))
+    #   
+    #   if (length(touching_idx) > 0) {
+    #     candidate_boxlets <- boxlets_sf[touching_idx, ]
+    #     clipped_boxlets <- suppressWarnings(sf::st_intersection(candidate_boxlets, shifted_survey_area))
+    #     clipped_boxlets$clipped_area <- as.numeric(sf::st_area(clipped_boxlets))
+    #     clipped_boxlets$weight <- clipped_boxlets$clipped_area / clipped_boxlets$area
+    #     Q_b <- sum(clipped_boxlets$p_j * clipped_boxlets$weight, na.rm = TRUE) * P_a
+    #   } else {
+    #     Q_b <- 0
+    #   }
+    #   
+    #   A_b[i] <- N_hat * Q_b
+    # }
     
     # Calculate Q(b) for Each Shift
     for (i in 1:B) {
