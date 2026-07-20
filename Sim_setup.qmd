@@ -1,0 +1,315 @@
+---
+title: "Sim_setup"
+format: html
+---
+
+# Packages
+
+```{r}
+# install.packages("dsims", repos = "https://cloud.r-project.org")
+library(tidyverse)
+library(dsims)
+library(Distance)
+library(dssd)
+library(dsm)
+library(sf)
+library(mgcv)
+library(qrng) 
+library(furrr)
+library(future)
+```
+
+# Import Functions
+
+```{r}
+source(here::here("Functions4.R"))
+```
+
+# Constants
+
+```{r}
+true_N <- 400
+
+points_or_lines = "line"
+
+trunc_dist <- 40
+scale_parameter <- 15
+design_spacing <- 1400
+
+density_grid_spacing <- 100
+
+# design_angle <- 0
+bootstrap_reps <- 200
+
+outer_loop_reps <- 100
+```
+
+# Code
+
+## Region
+
+```{r}
+# region <- make_region(region_sf = NULL, 0, 5000, 0, 5000, "m")
+# plot(region, main = "Survey Region")
+```
+
+# Replicating Fewster Triangle regions
+
+```{r}
+# Define a right triangle with 1000m axes
+triangle_coords <- matrix(c(
+  10000, 10000, 
+  10000, 0, 
+  0, 0, 
+  10000, 10000       
+), ncol = 2, byrow = TRUE)
+
+region <- st_polygon(list(triangle_coords)) |> 
+  st_sfc() |> 
+  st_sf(geometry = _)
+
+region <- make_region(region_sf = region)
+
+plot(region)
+```
+
+## Density
+
+```{r}
+# my_hotspots <- list(
+#   list(centre = c(2000, 8000), sigma = 800, amplitude = 1.2),
+#   list(centre = c(5000, 2000), sigma = 6000, amplitude = 0.5),
+#   list(centre = c(8000, 9000), sigma = 1000, amplitude = 2)
+# )
+
+my_hotspots1 <- list(
+  list(centre = c(5000, 5000), sigma = 80000, amplitude = 1)
+)
+
+density_true1 <- make_hotspot_density(region, my_hotspots1)
+
+
+
+my_hotspots2 <- list(
+  list(centre = c(0, 0), sigma = 2000, amplitude = 10)
+)
+
+density_true2 <- make_hotspot_density(region, my_hotspots2)
+
+
+
+my_hotspots3 <- list(
+  list(centre = c(10000, 0), sigma = 4000, amplitude = 1),
+  list(centre = c(10000, 2500), sigma = 4000, amplitude = 1),
+  list(centre = c(10000, 5000), sigma = 4000, amplitude = 1),
+  list(centre = c(10000, 7500), sigma = 4000, amplitude = 1),
+  list(centre = c(10000, 10000), sigma = 4000, amplitude = 1)
+)
+
+density_true3 <- make_hotspot_density(region, my_hotspots3)
+
+
+
+my_hotspots4 <- list(
+  list(centre = c(10000, 0), sigma = 10000, amplitude = 1)
+)
+
+density_true4 <- make_hotspot_density(region, my_hotspots4)
+
+densities <- list(density_true1, density_true2, density_true3, density_true4)
+```
+
+```{r}
+ggplot() +
+  # Assuming the first list element contains the sf density grid
+  geom_sf(data = density_true1@density.surface[[1]], aes(fill = density), color = NA) +
+  scale_fill_viridis_c() +
+  geom_sf(data = region@region, fill = NA, color = "black", size = 1) +
+  theme_minimal()
+```
+
+
+# Test Survey
+
+```{r}
+test_region <- region
+
+test_density_true <- density_true2
+
+test_sim_truth <- generate_simulated_pop(
+  region = test_region,
+  density_true = test_density_true,
+  N = true_N,
+  scale_param = scale_parameter,
+  truncation = trunc_dist
+)
+
+test_population_description <- test_sim_truth$population_description
+test_detectability <- test_sim_truth$detectability
+
+ggplot() +
+  # Base layer: The study region
+  geom_sf(data = test_region@region, fill = "white", color = "black", linewidth = 1) +
+  
+  # Animal layer: The exact coordinates of the generated population
+  geom_point(data = test_sim_truth$population@population, 
+             aes(x = x, y = y), 
+             color = "darkgreen", size = 1, alpha = 0.5) +
+  
+  theme_minimal() +
+  labs(title = "Simulated Population Realization",
+       subtitle = paste("Total Animals:", nrow(test_sim_truth$population@population)),
+       x = "X coordinate", y = "Y coordinate")
+
+test_survey <- survey_data(
+  region = region,
+  realized_population = test_sim_truth$population,
+  transect_type = points_or_lines,
+  spacing = design_spacing,
+  truncation = trunc_dist
+)
+
+test_ds <- fit_ds(
+  region = test_region,
+  dist_data = test_survey$dist_data,
+  obsdata = test_survey$obsdata,
+  segdata = test_survey$segdata,
+  transect_type = points_or_lines,
+  truncation = trunc_dist
+)
+
+test_design <- test_survey$design
+
+test_analyses <- make.ds.analysis(dfmodel = ~ 1,
+                                  key = "hn",
+                                  truncation = trunc_dist,
+                                  criteria = "AIC")
+
+test_sim <- make.simulation(reps = 3,
+                            design = test_design,
+                            population.description = test_population_description,
+                            detectability = test_detectability,
+                            ds.analysis = test_analyses)
+
+# Generate a single instance of a survey: a population, set of transects
+# and the resulting distance data
+test_survey <- run.survey(test_sim)
+
+# plot(test_survey, test_region)
+
+plot(test_ds$ds_model)
+
+test_ds$ds_model$dht$individuals
+
+n_detections <- test_ds$ds_model$dht$individuals$summary$n
+```
+
+```{r}
+# Extract the unique IDs of animals that were detected during this survey run
+detected_ids <- test_survey@dist.data$individual[!is.na(test_survey@dist.data$distance)]
+
+# Use ggplot2 to safely layer S4 spatial slots and avoid dispatch errors
+ggplot() +
+  # 1. Base layer: The study region
+  geom_sf(data = test_region@region, fill = "white", color = "black", linewidth = 1) +
+  
+  # 2. Animal layer: True population, highlighting detected animals in red
+  geom_point(data = test_sim_truth$population@population |> 
+               mutate(Detected = individual %in% detected_ids),
+             aes(x = x, y = y, color = Detected), size = 1, alpha = 0.7) +
+             
+  geom_sf(data = test_survey@transect@samplers, color = "blue", linewidth = 0.8) +
+  
+  scale_color_manual(values = c("FALSE" = "grey80", "TRUE" = "red")) +
+  theme_minimal() +
+  labs(title = "Simulated Survey Execution",
+       subtitle = paste("Transect Type:", points_or_lines, "| Blue: Samplers | Red: Detected"),
+       x = "X", y = "Y")
+```
+
+
+```{r}
+mean_detections <- function(N, 
+                            reps = 100, 
+                            density = density_true1,
+                            survey_region = region,
+                            scale = scale_parameter,
+                            trunc = trunc_dist,
+                            transect = points_or_lines,
+                            spacing = design_spacing) {
+  
+  dets <- numeric(reps)
+  
+  for(i in seq_len(reps)) {
+    
+    sim_truth <- generate_simulated_pop(
+      region = survey_region,
+      density_true = density,
+      N = N,
+      scale_param = scale,
+      truncation = trunc
+    )
+    
+    survey <- survey_data(
+      region = survey_region,
+      realized_population = sim_truth$population,
+      transect_type = transect,
+      spacing = spacing,
+      truncation = trunc
+    )
+    
+    fit <- fit_ds(
+      region = survey_region,
+      dist_data = survey$dist_data,
+      obsdata = survey$obsdata,
+      segdata = survey$segdata,
+      transect_type = transect,
+      truncation = trunc
+    )
+    
+    # 2. SAFETY CATCH FOR FAILED MODELS
+    if (!is.null(fit$ds_model) && !is.null(fit$ds_model$dht)) {
+      dets[i] <- fit$ds_model$dht$individuals$summary$n
+    } else {
+      # Fallback: Count the raw valid observations manually if the model failed to fit
+      dets[i] <- sum(survey$dist_data$distance <= trunc, na.rm = TRUE)
+    }
+  }
+  
+  # Return named vector for easier reading in the console
+  res <- c(Mean_Detections = mean(dets), SD = sd(dets))
+  return(res)
+}
+```
+
+```{r, message=FALSE}
+mean_detections(N = 1400, 
+                reps = 5, 
+                density = density_true1,
+                survey_region = region,
+                scale = scale_parameter,
+                trunc = trunc_dist,
+                transect = points_or_lines,
+                spacing = design_spacing)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

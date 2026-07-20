@@ -29,18 +29,18 @@ source(here::here("Functions4.R"))
 ```{r}
 true_N <- 5000
 
-points_or_lines = "point"
+points_or_lines = "line"
 
-trunc_dist <- 200
-scale_parameter <- 120
-design_spacing <- 1000
+trunc_dist <- 40
+scale_parameter <- 15
+design_spacing <- 500
 
 density_grid_spacing <- 100
 
 # design_angle <- 0
-bootstrap_reps <- 10
+bootstrap_reps <- 200
 
-outer_loop_reps <- 50
+outer_loop_reps <- 100
 ```
 
 # Code
