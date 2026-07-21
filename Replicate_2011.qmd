@@ -7,6 +7,7 @@ format: html
 
 ```{r}
 library(tidyverse)
+library(knitr)
 library(dsims)
 library(Distance)
 library(dssd)
@@ -27,20 +28,20 @@ source(here::here("Functions4.R"))
 # Constants
 
 ```{r}
-true_N <- 5000
+true_N <- 3000
 
 points_or_lines = "line"
 
 trunc_dist <- 40
 scale_parameter <- 15
-design_spacing <- 500
+design_spacing <- 2000
 
 density_grid_spacing <- 100
 
-# design_angle <- 0
-bootstrap_reps <- 200
 
-outer_loop_reps <- 100
+
+outer_loop_reps <- 10
+bootstrap_reps <- 20
 ```
 
 # Code
@@ -130,10 +131,10 @@ ggplot() +
 
 # Test Survey
 
-```{r}
+```{r, message=FALSE}
 test_region <- region
 
-test_density_true <- density_true1
+test_density_true <- density_true4
 
 test_sim_truth <- generate_simulated_pop(
   region = test_region,
@@ -170,21 +171,45 @@ test_analyses <- make.ds.analysis(dfmodel = ~ 1,
                                   truncation = trunc_dist,
                                   criteria = "AIC")
 
-test_sim <- make.simulation(reps = 3,
-                            design = test_design,
-                            population.description = test_population_description,
-                            detectability = test_detectability,
-                            ds.analysis = test_analyses)
+# test_sim <- make.simulation(reps = 3,
+#                             design = test_design,
+#                             population.description = test_population_description,
+#                             detectability = test_detectability,
+#                             ds.analysis = test_analyses)
+# 
+# # Generate a single instance of a survey: a population, set of transects
+# # and the resulting distance data
+# test_survey <- run.survey(test_sim)
 
-# Generate a single instance of a survey: a population, set of transects
-# and the resulting distance data
-test_survey <- run.survey(test_sim)
+# 1. Extract the spatial objects and distance data from your custom lists
+pop_df <- test_sim_truth$population@population 
+trans_sf <- test_survey$transects@samplers
+obs_df <- test_survey$dist_data
 
-plot(test_survey, test_region)
+# 2. Flag detected animals AND convert the raw x/y coordinates to spatial sf points
+pop_sf <- pop_df |> 
+  mutate(Status = if_else(as.character(individual) %in% as.character(obs_df$object), 
+                          "Detected", "Missed")) |> 
+  st_as_sf(coords = c("x", "y"), crs = st_crs(test_region@region)) # Convert to sf for ggplot
 
-plot(test_ds$ds_model)
+# 3. Build the plot
+ggplot() +
+  geom_sf(data = test_region@region, fill = "white", color = "black", linewidth = 0.5) +
+  geom_sf(data = trans_sf, color = "blue", linewidth = 0.8) +
+  geom_sf(data = pop_sf, aes(color = Status), size = 1.2) +
+  scale_color_manual(values = c("Detected" = "red", "Missed" = "grey80")) +
+  theme_minimal() +
+  labs(
+    title = "Simulated Survey with Detections",
+    subtitle = paste("Detected:", nrow(obs_df), "of", nrow(pop_sf)),
+    color = "Animal Status"
+  )
 
-test_ds$ds_model$dht$individuals
+# plot(test_ds$ds_model)
+
+# sum(test_ds$ds_model$dht$individuals$Nhat.by.sample$n)
+
+# test_ds$ds_model$dht$individuals$summary$n
 ```
 
 
@@ -210,7 +235,9 @@ all_runs <- future_map(1:outer_loop_reps, function(b) {
     survey_results <- survey_data(
       region = region,
       realized_population = sim_pop$population,
-      transect_type = points_or_lines
+      transect_type = points_or_lines,
+      spacing = design_spacing,
+      truncation = trunc_dist
     )
 
     ds_results <- fit_ds(
@@ -295,6 +322,8 @@ all_runs <- future_map(1:outer_loop_reps, function(b) {
       iteration = b,
       scenario = paste("Scenario", i),
       N_hat = ds_results$N_hat,
+      
+      n_detections = nrow(survey_results$obsdata),
 
       se_R2 = R2_est,
       se_R3 = R3_est,
@@ -389,6 +418,7 @@ sim_summary <- sim_results |>
   group_by(scenario) |>
   summarize(
     mean_N_hat = mean(N_hat, na.rm = TRUE),
+    mean_dets = mean(n_detections, na.rm = TRUE),
     true_SE = sd(N_hat, na.rm = TRUE),
     mean_se_R2 = mean(se_R2, na.rm = TRUE),
     mean_se_R3 = mean(se_R3, na.rm = TRUE),
@@ -404,7 +434,8 @@ sim_summary <- sim_results |>
     mean_se_boot_disc = mean(se_boot_disc, na.rm = TRUE)
   )
 
-print(sim_summary)
+print(sim_summary) |>
+  kable()
 ```
 
 
@@ -447,6 +478,16 @@ ggplot(plot_dat, aes(x = name, y = value)) +
 ```{r}
 # saveRDS(sim_results, file = "100_outer_250_inner")
 ```
+
+note: All population size simulations were figured out on the uniform density, I will just assume that the other population sizes work when 10% is added.
+
+
+
+
+
+
+
+
 
 
 

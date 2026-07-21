@@ -1141,7 +1141,7 @@ get_bootstrap_disc_density <- function(region,
   cell_dimensions <- sqrt(density_surface$area)
   
   # Create a baseline uniform density to act as a placeholder for a valid S4 initialization
-  dummy_density <- dsims::make.density(region = region, x.space = spacing, constant = 1)
+  dummy_density <- dsims::make.density(region = region, x.space = 100, constant = 1)
   dummy_pop_desc <- dsims::make.population.description(
     region = region,
     density = dummy_density,

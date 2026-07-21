@@ -28,13 +28,13 @@ source(here::here("Functions4.R"))
 # Constants
 
 ```{r}
-true_N <- 400
+true_N <- 14000
 
-points_or_lines = "line"
+points_or_lines = "point"
 
-trunc_dist <- 40
-scale_parameter <- 15
-design_spacing <- 1400
+trunc_dist <- 200
+scale_parameter <- 70
+design_spacing <- 10000/sqrt(2*10)
 
 density_grid_spacing <- 100
 
@@ -131,11 +131,12 @@ ggplot() +
 
 # Test Survey
 
-```{r}
+```{r, message=FALSE}
+# Test Survey
 test_region <- region
+test_density_true <- density_true1
 
-test_density_true <- density_true2
-
+# 1. Generate the true population locations
 test_sim_truth <- generate_simulated_pop(
   region = test_region,
   density_true = test_density_true,
@@ -144,31 +145,16 @@ test_sim_truth <- generate_simulated_pop(
   truncation = trunc_dist
 )
 
-test_population_description <- test_sim_truth$population_description
-test_detectability <- test_sim_truth$detectability
-
-ggplot() +
-  # Base layer: The study region
-  geom_sf(data = test_region@region, fill = "white", color = "black", linewidth = 1) +
-  
-  # Animal layer: The exact coordinates of the generated population
-  geom_point(data = test_sim_truth$population@population, 
-             aes(x = x, y = y), 
-             color = "darkgreen", size = 1, alpha = 0.5) +
-  
-  theme_minimal() +
-  labs(title = "Simulated Population Realization",
-       subtitle = paste("Total Animals:", nrow(test_sim_truth$population@population)),
-       x = "X coordinate", y = "Y coordinate")
-
+# 2. Run a single survey on THAT exact population
 test_survey <- survey_data(
-  region = region,
+  region = test_region,
   realized_population = test_sim_truth$population,
   transect_type = points_or_lines,
   spacing = design_spacing,
   truncation = trunc_dist
 )
 
+# 3. Fit the distance model to THAT survey data
 test_ds <- fit_ds(
   region = test_region,
   dist_data = test_survey$dist_data,
@@ -178,35 +164,13 @@ test_ds <- fit_ds(
   truncation = trunc_dist
 )
 
-test_design <- test_survey$design
-
-test_analyses <- make.ds.analysis(dfmodel = ~ 1,
-                                  key = "hn",
-                                  truncation = trunc_dist,
-                                  criteria = "AIC")
-
-test_sim <- make.simulation(reps = 3,
-                            design = test_design,
-                            population.description = test_population_description,
-                            detectability = test_detectability,
-                            ds.analysis = test_analyses)
-
-# Generate a single instance of a survey: a population, set of transects
-# and the resulting distance data
-test_survey <- run.survey(test_sim)
-
-# plot(test_survey, test_region)
-
+# View the detection function
 plot(test_ds$ds_model)
-
-test_ds$ds_model$dht$individuals
-
-n_detections <- test_ds$ds_model$dht$individuals$summary$n
 ```
 
 ```{r}
-# Extract the unique IDs of animals that were detected during this survey run
-detected_ids <- test_survey@dist.data$individual[!is.na(test_survey@dist.data$distance)]
+# Extract the unique IDs of animals that were detected during this specific survey run
+detected_ids <- test_survey$dist_data$individual[!is.na(test_survey$dist_data$distance)]
 
 # Use ggplot2 to safely layer S4 spatial slots and avoid dispatch errors
 ggplot() +
@@ -218,13 +182,18 @@ ggplot() +
                mutate(Detected = individual %in% detected_ids),
              aes(x = x, y = y, color = Detected), size = 1, alpha = 0.7) +
              
-  geom_sf(data = test_survey@transect@samplers, color = "blue", linewidth = 0.8) +
+  # 3. Transects layer: Call the samplers directly from the list object
+  geom_sf(data = test_survey$transects@samplers, color = "blue", linewidth = 0.8) +
   
   scale_color_manual(values = c("FALSE" = "grey80", "TRUE" = "red")) +
   theme_minimal() +
   labs(title = "Simulated Survey Execution",
        subtitle = paste("Transect Type:", points_or_lines, "| Blue: Samplers | Red: Detected"),
        x = "X", y = "Y")
+```
+
+```{r}
+plan(multisession)
 ```
 
 
@@ -238,43 +207,33 @@ mean_detections <- function(N,
                             transect = points_or_lines,
                             spacing = design_spacing) {
   
-  dets <- numeric(reps)
-  
-  for(i in seq_len(reps)) {
-    
-    sim_truth <- generate_simulated_pop(
-      region = survey_region,
-      density_true = density,
-      N = N,
-      scale_param = scale,
-      truncation = trunc
-    )
-    
-    survey <- survey_data(
-      region = survey_region,
-      realized_population = sim_truth$population,
-      transect_type = transect,
-      spacing = spacing,
-      truncation = trunc
-    )
-    
-    fit <- fit_ds(
-      region = survey_region,
-      dist_data = survey$dist_data,
-      obsdata = survey$obsdata,
-      segdata = survey$segdata,
-      transect_type = transect,
-      truncation = trunc
-    )
-    
-    # 2. SAFETY CATCH FOR FAILED MODELS
-    if (!is.null(fit$ds_model) && !is.null(fit$ds_model$dht)) {
-      dets[i] <- fit$ds_model$dht$individuals$summary$n
-    } else {
-      # Fallback: Count the raw valid observations manually if the model failed to fit
-      dets[i] <- sum(survey$dist_data$distance <= trunc, na.rm = TRUE)
-    }
-  }
+    dets <- future_map_dbl(
+    seq_len(reps),
+    \(i) {
+      
+      sim_truth <- generate_simulated_pop(
+        region = survey_region,
+        density_true = density,
+        N = N,
+        scale_param = scale,
+        truncation = trunc
+      )
+      
+      survey <- survey_data(
+        region = survey_region,
+        realized_population = sim_truth$population,
+        transect_type = transect,
+        spacing = spacing,
+        truncation = trunc
+      )
+      
+      sum(
+        !is.na(survey$dist_data$distance) &
+          survey$dist_data$distance <= trunc
+      )
+    },
+    .options = furrr_options(seed = TRUE)
+  )
   
   # Return named vector for easier reading in the console
   res <- c(Mean_Detections = mean(dets), SD = sd(dets))
@@ -283,9 +242,9 @@ mean_detections <- function(N,
 ```
 
 ```{r, message=FALSE}
-mean_detections(N = 1400, 
+mean_detections(N = true_N, 
                 reps = 5, 
-                density = density_true1,
+                density = density_true2,
                 survey_region = region,
                 scale = scale_parameter,
                 trunc = trunc_dist,
@@ -294,10 +253,66 @@ mean_detections(N = 1400,
 ```
 
 
+```{r}
+sim_grid <- expand_grid(
+  target_dets = c(30, 120, 300),
+  n_transects = c(10, 20, 30, 50)
+) |> 
+  mutate(
+    spacing_val = 10000 / sqrt(2*n_transects)
+  )
 
+find_optimal_N <- function(target_n, spacing_val) {
+  
+  # The Objective Function: optim() will try to minimize this value
+  objective_func <- function(N_guess) {
+    
+    # Run the fast simulation with the current guess for N
+    sim_res <- mean_detections(
+      N = round(N_guess), 
+      spacing = spacing_val,
+      reps = 20,  
+      density = density_true1,
+      transect = "point"
+    )
+    
+    # Return the squared error (Difference between simulated detections and our target)
+    sq_error <- (sim_res["Mean_Detections"] - target_n)^2
+    return(sq_error)
+  }
+  
+  # Use optim with the "Brent" method, which is specifically designed for 1-Dimensional bounds
+  opt_res <- optim(
+    par = 5000,           # Initial starting guess for N
+    fn = objective_func,
+    method = "Brent",
+    lower = 50,           # Minimum possible population
+    upper = 50000,        # Maximum possible population bounds (increase if needed)
+    control = list(abstol = 5) # Stop when we are very close to the target
+  )
+  
+  # Return the best N rounded to a whole animal
+  return(round(opt_res$par))
+}
 
+# 3. Run the Grid in Parallel
+# We use future_map2_dbl to iterate over our grid of Targets and Spacings
+plan(multisession)
 
+cat("Starting optimization for 12 scenarios. This may take a few minutes...\n")
 
+results_table <- sim_grid |> 
+  mutate(
+    Required_N = future_map2_dbl(
+      target_dets, spacing_val, 
+      ~find_optimal_N(.x, .y),
+      .options = furrr_options(seed = TRUE)
+    )
+  )
+
+# 4. View the Final Results
+print(results_table |> arrange(target_dets, n_transects))
+```
 
 
 
