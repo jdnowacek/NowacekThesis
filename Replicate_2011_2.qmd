@@ -1,5 +1,5 @@
 ---
-title: "Replicate_2011"
+title: "Replicate_2011_2"
 format: html
 ---
 
@@ -28,20 +28,17 @@ source(here::here("Functions4.R"))
 # Constants
 
 ```{r}
-true_N <- 6400
+true_N <- 1300
 
 points_or_lines = "line"
 
 trunc_dist <- 40
 scale_parameter <- 15
-design_spacing <- 2000
+design_spacing <- 400
 
 density_grid_spacing <- 100
 
-
-
-outer_loop_reps <- 5
-bootstrap_reps <- 20
+bootstrap_reps <- 10
 ```
 
 # Code
@@ -212,26 +209,23 @@ ggplot() +
 # test_ds$ds_model$dht$individuals$summary$n
 ```
 
-
-## For each region:
-
-```{r, echo=FALSE, message=FALSE}
+```{r, message=FALSE}
 num_cores <- max(1, parallel::detectCores() - 2)
 plan(multisession, workers = num_cores)
 
 num_scenarios <- length(densities)
 
-message(sprintf("Starting parallel simulation across %d workers...", num_cores))
+message(sprintf("Starting parallel evaluation across %d scenarios...", num_scenarios))
 
-all_runs <- future_map(1:outer_loop_reps, function(b) {
+all_runs <- future_map(seq_along(densities), function(i) {
 
-  inner_results <- map(seq_along(densities), function(i) {
-
+    # 1. Generate Population
     sim_pop <- generate_simulated_pop(
       region = region,
       density_true = densities[[i]]
     )
 
+    # 2. Run Survey
     survey_results <- survey_data(
       region = region,
       realized_population = sim_pop$population,
@@ -240,6 +234,7 @@ all_runs <- future_map(1:outer_loop_reps, function(b) {
       truncation = trunc_dist
     )
 
+    # 3. Fit Distance Model
     ds_results <- fit_ds(
       region = region,
       dist_data = survey_results$dist_data,
@@ -249,6 +244,7 @@ all_runs <- future_map(1:outer_loop_reps, function(b) {
       truncation = trunc_dist
     )
 
+    # 4. Fit Spatial Density Model
     dsm_results <- fit_dsm_and_surface(
       obsdata = survey_results$obsdata,
       segdata = survey_results$segdata,
@@ -260,6 +256,19 @@ all_runs <- future_map(1:outer_loop_reps, function(b) {
       y_space = density_grid_spacing
     )
 
+    # 5. THE GOLD STANDARD: Calculate exact mathematical variance
+    true_analytical <- analytic_se(
+      region = region,
+      dsm_model = dsm_results$dsm,
+      ds_results = ds_results,
+      transect_type = points_or_lines,
+      spacing = design_spacing,
+      truncation = trunc_dist,
+      integration_spacing = density_grid_spacing,
+      phase_grid = 100 
+    )
+
+    # 6. Striplet/Boxlet Approximations
     spatial_variances <- striplet_boxlet(
       region = region,
       segdata = survey_results$segdata,
@@ -271,37 +280,32 @@ all_runs <- future_map(1:outer_loop_reps, function(b) {
       truncation = trunc_dist
     )
 
+    # 7. Extract Distance Model Estimators
     if (points_or_lines == "line") {
-
       R2_est <- ds_results$analytical_variances$se_N_R2 %||% NA_real_
       R3_est <- ds_results$analytical_variances$se_N_R3 %||% NA_real_
       S1_est <- ds_results$analytical_variances$se_N_S1 %||% NA_real_
       S2_est <- ds_results$analytical_variances$se_N_S2 %||% NA_real_
       O1_est <- ds_results$analytical_variances$se_N_O1 %||% NA_real_
       O2_est <- ds_results$analytical_variances$se_N_O2 %||% NA_real_
-
       P2_est <- NA_real_
       P3_est <- NA_real_
-
       striplet_est <- spatial_variances$se_N_striplet %||% NA_real_
       boxlet_est <- NA_real_
-
     } else {
-
       R2_est <- NA_real_
       R3_est <- NA_real_
       S1_est <- NA_real_
       S2_est <- NA_real_
       O1_est <- NA_real_
       O2_est <- NA_real_
-
       P2_est <- ds_results$analytical_variances$se_N_P2 %||% NA_real_
       P3_est <- ds_results$analytical_variances$se_N_P3 %||% NA_real_
-
       striplet_est <- NA_real_
       boxlet_est <- spatial_variances$se_N_boxlet %||% NA_real_
     }
 
+    # 8. Bootstrap Approximations
     standard <- get_bootstrap(
       region = region,
       population_description = dsm_results$population_description,
@@ -318,12 +322,13 @@ all_runs <- future_map(1:outer_loop_reps, function(b) {
       reps = bootstrap_reps
     )
 
+    # 9. Store Row Results
     res_row <- tibble(
-      iteration = b,
       scenario = paste("Scenario", i),
       N_hat = ds_results$N_hat,
-      
       n_detections = nrow(survey_results$obsdata),
+      
+      true_analytic_se = true_analytical$se, # Explicitly mapped from analytic_se output
 
       se_R2 = R2_est,
       se_R3 = R3_est,
@@ -341,48 +346,36 @@ all_runs <- future_map(1:outer_loop_reps, function(b) {
       se_boot_disc = sd(disc_density$N_hat, na.rm = TRUE)
     )
 
+    # Return elements
     list(
       row = res_row,
-      bootstraps =
-        if (b == outer_loop_reps)
-          list(
-            Standard = standard$N_hat,
-            Discrete = disc_density$N_hat
-          )
-        else
-          NULL
+      bootstraps = list(
+        Standard = standard$N_hat,
+        Discrete = disc_density$N_hat
+      )
     )
-
-  })
-
-  list(
-    summary = map_dfr(inner_results, "row"),
-    bootstraps = map(inner_results, "bootstraps")
-  )
 
 }, .options = furrr_options(seed = TRUE))
 
-sim_results <- map_dfr(all_runs, "summary")
-
-last_rep_bootstraps <- all_runs[[outer_loop_reps]]$bootstraps
-
 plan(sequential)
+
+# Extract nested data
+sim_results <- map_dfr(all_runs, "row")
+scenario_bootstraps <- map(all_runs, "bootstraps")
 ```
+
 
 ```{r}
 # Plotting Monte Carlo convergence 
 
-# Custom function to calculate cumulative SD
 cum_sd <- function(x) {
-  # Start from 2 because you can't get an SD of a single number
   sapply(2:length(x), function(j) sd(x[1:j], na.rm = TRUE))
 }
 
-# Build plot data dynamically by looping through the saved list of the last iteration
-plot_data <- bind_rows(lapply(1:num_scenarios, function(i) {
+plot_data_boot <- bind_rows(lapply(1:num_scenarios, function(i) {
   
-  boot_std <- last_rep_bootstraps[[i]]$Standard
-  boot_disc <- last_rep_bootstraps[[i]]$Discrete
+  boot_std <- scenario_bootstraps[[i]]$Standard
+  boot_disc <- scenario_bootstraps[[i]]$Discrete
   
   tibble(
     replicate = 2:bootstrap_reps,
@@ -397,16 +390,16 @@ plot_data <- bind_rows(lapply(1:num_scenarios, function(i) {
     )
 }))
 
-# Generate the facet plot
-ggplot(plot_data, aes(x = replicate, y = Running_SD, color = Method)) +
+ggplot(plot_data_boot, aes(x = replicate, y = Running_SD, color = Method)) +
   geom_line(alpha = 0.8, linewidth = 1) +
-  facet_wrap(~Scenario, scales = "free_y") + # 'free_y' allows each density to have its own y-axis scale
+  facet_wrap(~Scenario, scales = "free_y") +
   scale_color_manual(values = c("Standard" = "blue", "Discrete" = "red")) +
+  # geom_hline(data = sim_results, aes(yintercept = true_analytic_se), color = "black", linetype = "dotted") +
   labs(
-    title = "Bootstrap Convergence (Running SD)",
-    subtitle = paste("Recorded from outer loop iteration", outer_loop_reps),
+    title = "Bootstrap Convergence toward Analytical Truth",
+    subtitle = "Dotted line represents the exact mathematical standard error",
     x = "Bootstrap Replicate",
-    y = "Cumulative Standard Deviation (SE of N_hat)",
+    y = "Cumulative Standard Deviation",
     color = "Bootstrap Method"
   ) +
   theme_bw() +
@@ -436,23 +429,18 @@ sim_summary <- sim_results |>
 
 print(sim_summary) |>
   kable(digits = 1)
+
+# Exact standard error table for the single realization
+print(sim_results |> select(-c(se_P2, se_P3, se_boxlet))) |>
+  kable(digits = 1)
 ```
 
 
 ```{r}
 desired_order <- c(
-  "se_R2",
-  "se_R3",
-  "se_S1",
-  "se_S2",
-  "se_O1",
-  "se_O2",
-  "se_P2",
-  "se_P3",
-  "se_striplet",
-  "se_boxlet",
-  "se_boot_std",
-  "se_boot_disc"
+  "se_R2", "se_R3", "se_S1", "se_S2", "se_O1", "se_O2",
+  "se_P2", "se_P3", "se_striplet", "se_boxlet",
+  "se_boot_std", "se_boot_disc"
 )
 
 plot_dat <- sim_results |>
@@ -463,15 +451,16 @@ plot_dat <- sim_results |>
   mutate(name = factor(name, levels = desired_order)) |>
   filter(value < 1000)
 
-plot_dat <- plot_dat |>
-  group_by(scenario) |>
-  mutate(true_ish_se = sd(N_hat))
-
 ggplot(plot_dat, aes(x = name, y = value)) +
-  geom_boxplot() +
-  geom_hline(aes(yintercept = true_ish_se), color = "red", linetype = "dashed", linewidth = 0.8) +
+  geom_point(size = 4, color = "blue") +
+  geom_hline(aes(yintercept = true_analytic_se), color = "red", linetype = "dashed", linewidth = 0.8) +
   facet_grid(rows = vars(scenario)) +
-  # scale_x_discrete(drop = TRUE) +
+  labs(
+      title = "Estimator Accuracy on a Single Realization",
+      subtitle = "Red dashed line represents exact mathematical standard error (analytic_se)",
+      x = "Estimator Type",
+      y = "Estimated Standard Error"
+  ) +
   theme_bw()
 ```
 

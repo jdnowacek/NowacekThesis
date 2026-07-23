@@ -186,31 +186,91 @@ analytic_se <- function(region,
 # Small line-transect example ##########
 
 set.seed(42)
-trunc_dist <- 5
-density_grid_spacing <- 10
 
-region <- make_region(
-  lower_x_bound = 0,
-  upper_x_bound = 100,
-  lower_y_bound = 0,
-  upper_y_bound = 100,
-  units = "m"
+
+true_N <- 6400
+
+points_or_lines = "line"
+
+trunc_dist <- 40
+scale_parameter <- 15
+design_spacing <- 2000
+
+density_grid_spacing <- 100
+
+# Define a right triangle with 10000m axes
+triangle_coords <- matrix(c(
+  10000, 10000, 
+  10000, 0, 
+  0, 0, 
+  10000, 10000       
+), ncol = 2, byrow = TRUE)
+
+region <- st_polygon(list(triangle_coords)) |> 
+  st_sfc() |> 
+  st_sf(geometry = _)
+
+region <- make_region(region_sf = region)
+
+# region <- make_region(
+#   lower_x_bound = 0,
+#   upper_x_bound = 100,
+#   lower_y_bound = 0,
+#   upper_y_bound = 100,
+#   units = "m"
+# )
+
+my_hotspots1 <- list(
+  list(centre = c(5000, 5000), sigma = 80000, amplitude = 1)
 )
 
-density <- make.density(region, x.space = density_grid_spacing, constant = 1)
+density_true1 <- make_hotspot_density(region, my_hotspots1)
+
+
+
+my_hotspots2 <- list(
+  list(centre = c(0, 0), sigma = 10000, amplitude = 1)
+)
+
+density_true2 <- make_hotspot_density(region, my_hotspots2)
+
+
+
+my_hotspots3 <- list(
+  list(centre = c(10000, 0), sigma = 4000, amplitude = 1),
+  list(centre = c(10000, 2500), sigma = 4000, amplitude = 1),
+  list(centre = c(10000, 5000), sigma = 4000, amplitude = 1),
+  list(centre = c(10000, 7500), sigma = 4000, amplitude = 1),
+  list(centre = c(10000, 10000), sigma = 4000, amplitude = 1)
+)
+
+density_true3 <- make_hotspot_density(region, my_hotspots3)
+
+
+
+my_hotspots4 <- list(
+  list(centre = c(10000, 0), sigma = 10000, amplitude = 1)
+)
+
+density_true4 <- make_hotspot_density(region, my_hotspots4)
+
+# density <- make.density(region, x.space = density_grid_spacing, constant = 1)
+density <- density_true1
+
 population <- generate_simulated_pop(
   region,
   density,
-  N = 1000,
-  scale_param = 2,
+  N = true_N,
+  scale_param = scale_parameter,
   truncation = trunc_dist
 )
+
 
 survey <- survey_data(
   region,
   population$population,
-  transect_type = "line",
-  spacing = 20,
+  transect_type = points_or_lines,
+  spacing = design_spacing,
   truncation = trunc_dist
 )
 
@@ -219,7 +279,7 @@ ds_results <- fit_ds(
   survey$dist_data,
   survey$obsdata,
   survey$segdata,
-  transect_type = "line",
+  transect_type = points_or_lines,
   truncation = trunc_dist
 )
 
@@ -238,9 +298,9 @@ result <- analytic_se(
   dsm_model,
   ds_results,
   transect_type = "line",
-  spacing = 20,
+  spacing = design_spacing,
   truncation = trunc_dist,
-  integration_spacing = 1, ## the size of the boxlets (eg 1x1 boxes here)
+  integration_spacing = 100, ## the size of the boxlets (eg 1x1 boxes here)
   phase_grid = 100 ## the number of starting positions used in numerical integration 
 )
 
@@ -266,6 +326,6 @@ striplet_boxlet(
   dsm_surface,
   ds_results,
   transect_type = "line",
-  spacing = 20,
+  spacing = design_spacing,
   truncation = trunc_dist
 )$se_N_striplet
