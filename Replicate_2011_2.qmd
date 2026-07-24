@@ -22,7 +22,7 @@ library(future)
 # Import Functions
 
 ```{r}
-source(here::here("Functions4.R"))
+source("Functions4.R")
 ```
 
 # Constants
@@ -210,10 +210,9 @@ ggplot() +
 ```
 
 ```{r, message=FALSE}
-num_cores <- max(1, parallel::detectCores() - 2)
-plan(multisession, workers = num_cores)
-
 num_scenarios <- length(densities)
+num_cores <- min(num_scenarios, max(1, future::availableCores() - 2))
+plan(multisession, workers = num_cores)
 
 message(sprintf("Starting parallel evaluation across %d scenarios...", num_scenarios))
 
@@ -264,7 +263,6 @@ all_runs <- future_map(seq_along(densities), function(i) {
       transect_type = points_or_lines,
       spacing = design_spacing,
       truncation = trunc_dist,
-      integration_spacing = density_grid_spacing,
       phase_grid = 100 
     )
 
@@ -470,12 +468,6 @@ ggplot(plot_dat, aes(x = name, y = value)) +
 ```
 
 note: All population size simulations were figured out on the uniform density, I will just assume that the other population sizes work when 10% is added.
-
-
-
-
-
-
 
 
 

@@ -1248,7 +1248,7 @@ analytic_se <- function(region,
                         transect_type,
                         spacing,
                         truncation,
-                        integration_spacing,
+                        integration_spacing = min(density_grid_spacing, truncation / 2),
                         phase_grid = 20) {
   
   # Set up the region and integration surface
@@ -1260,12 +1260,12 @@ analytic_se <- function(region,
   # Safely extract the exact P_a from the fitted model
   P_a_global <- summary(ds_results$ds_model$ddf)$average.p
   
-  surface <- make.density(
+  surface <- dsims:::get.density.surface(
     region = region,
     x.space = integration_spacing,
     y.space = integration_spacing,
     constant = 1
-  )@density.surface[[1]] |>
+  ) |>
     mutate(area = as.numeric(sf::st_area(geometry)))
   
   cell_abundance <- c(predict(
