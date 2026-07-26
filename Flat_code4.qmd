@@ -31,7 +31,7 @@ true_N <- 1000
 scale_parameter <- 500
 trunc_dist <- 1000
 
-points_or_lines <- "point" # Switch to "point" to test point transects
+points_or_lines <- "point" 
 visits <- 1
 bootstrap_reps <- 10
 
@@ -128,6 +128,9 @@ design <- make.design(region = region,
                       truncation = trunc_dist)
 
 transects <- generate.transects(design)
+
+print(names(transects@samplers))
+print(class(transects@samplers))
 
 if (points_or_lines == "line") {
   survey <- new("Survey.LT", population = realized_population, 

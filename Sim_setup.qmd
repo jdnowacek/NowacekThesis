@@ -91,7 +91,7 @@ density_true1 <- make_hotspot_density(region, my_hotspots1)
 
 
 my_hotspots2 <- list(
-  list(centre = c(0, 0), sigma = 2000, amplitude = 10)
+  list(centre = c(0, 0), sigma = 4000, amplitude = 4)
 )
 
 density_true2 <- make_hotspot_density(region, my_hotspots2)
@@ -99,11 +99,11 @@ density_true2 <- make_hotspot_density(region, my_hotspots2)
 
 
 my_hotspots3 <- list(
-  list(centre = c(10000, 0), sigma = 4000, amplitude = 1),
-  list(centre = c(10000, 2500), sigma = 4000, amplitude = 1),
-  list(centre = c(10000, 5000), sigma = 4000, amplitude = 1),
-  list(centre = c(10000, 7500), sigma = 4000, amplitude = 1),
-  list(centre = c(10000, 10000), sigma = 4000, amplitude = 1)
+  list(centre = c(10000, 0), sigma = 3000, amplitude = 3),
+  # list(centre = c(10000, 2500), sigma = 4000, amplitude = 4),
+  list(centre = c(10000, 5000), sigma = 3000, amplitude = 2),
+  # list(centre = c(10000, 7500), sigma = 4000, amplitude = 4),
+  list(centre = c(10000, 10000), sigma = 3000, amplitude = 3)
 )
 
 density_true3 <- make_hotspot_density(region, my_hotspots3)
@@ -111,7 +111,7 @@ density_true3 <- make_hotspot_density(region, my_hotspots3)
 
 
 my_hotspots4 <- list(
-  list(centre = c(10000, 0), sigma = 10000, amplitude = 1)
+  list(centre = c(10000, 0), sigma = 3000, amplitude = 4)
 )
 
 density_true4 <- make_hotspot_density(region, my_hotspots4)

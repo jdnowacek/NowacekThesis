@@ -43,7 +43,7 @@ make_hotspot_density <- function(region,
   # Create basic uniform density
   density_true <- make.density(region = region,
                                x.space = x_space,
-                               constant = 1)
+                               constant = 0.01)
   
   for (hotspot in hotspots) {
     density_true <- add.hotspot(object = density_true,
@@ -882,7 +882,8 @@ striplet_boxlet <- function(region,
       shifted_grid$X <- shifted_grid$X + shifts$x[i]
       shifted_grid$Y <- shifted_grid$Y + shifts$y[i]
       
-      shifted_points <- sf::st_as_sf(shifted_grid, coords = c("X", "Y"))
+      # shifted_points <- sf::st_as_sf(shifted_grid, coords = c("X", "Y"))
+      shifted_points <- sf::st_as_sf(shifted_grid, coords = c("X", "Y"), crs = sf::st_crs(region_sf))
       shifted_buffers <- sf::st_buffer(shifted_points, dist = truncation)
       shifted_survey_area <- sf::st_union(shifted_buffers)
       

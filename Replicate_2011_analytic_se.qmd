@@ -28,17 +28,17 @@ source("Functions4.R")
 # Constants
 
 ```{r}
-true_N <- 1300
+true_N <- 1630
 
 points_or_lines = "line"
 
 trunc_dist <- 40
 scale_parameter <- 15
-design_spacing <- 400
+design_spacing <- 2000
 
 density_grid_spacing <- 100
 
-bootstrap_reps <- 10
+bootstrap_reps <- 100
 ```
 
 # Code
@@ -88,7 +88,7 @@ density_true1 <- make_hotspot_density(region, my_hotspots1)
 
 
 my_hotspots2 <- list(
-  list(centre = c(0, 0), sigma = 10000, amplitude = 1)
+  list(centre = c(0, 0), sigma = 4000, amplitude = 4)
 )
 
 density_true2 <- make_hotspot_density(region, my_hotspots2)
@@ -96,11 +96,11 @@ density_true2 <- make_hotspot_density(region, my_hotspots2)
 
 
 my_hotspots3 <- list(
-  list(centre = c(10000, 0), sigma = 4000, amplitude = 1),
-  list(centre = c(10000, 2500), sigma = 4000, amplitude = 1),
-  list(centre = c(10000, 5000), sigma = 4000, amplitude = 1),
-  list(centre = c(10000, 7500), sigma = 4000, amplitude = 1),
-  list(centre = c(10000, 10000), sigma = 4000, amplitude = 1)
+  list(centre = c(10000, 0), sigma = 3000, amplitude = 3),
+  # list(centre = c(10000, 2500), sigma = 4000, amplitude = 4),
+  list(centre = c(10000, 5000), sigma = 3000, amplitude = 2),
+  # list(centre = c(10000, 7500), sigma = 4000, amplitude = 4),
+  list(centre = c(10000, 10000), sigma = 3000, amplitude = 3)
 )
 
 density_true3 <- make_hotspot_density(region, my_hotspots3)
@@ -108,7 +108,7 @@ density_true3 <- make_hotspot_density(region, my_hotspots3)
 
 
 my_hotspots4 <- list(
-  list(centre = c(10000, 0), sigma = 10000, amplitude = 1)
+  list(centre = c(10000, 0), sigma = 3000, amplitude = 4)
 )
 
 density_true4 <- make_hotspot_density(region, my_hotspots4)
@@ -119,7 +119,7 @@ densities <- list(density_true1, density_true2, density_true3, density_true4)
 ```{r}
 ggplot() +
   # Assuming the first list element contains the sf density grid
-  geom_sf(data = density_true4@density.surface[[1]], aes(fill = density), color = NA) +
+  geom_sf(data = density_true2@density.surface[[1]], aes(fill = density), color = NA) +
   scale_fill_viridis_c() +
   geom_sf(data = region@region, fill = NA, color = "black", size = 1) +
   theme_minimal()
@@ -131,7 +131,7 @@ ggplot() +
 ```{r, message=FALSE}
 test_region <- region
 
-test_density_true <- density_true4
+test_density_true <- density_true2
 
 test_sim_truth <- generate_simulated_pop(
   region = test_region,
@@ -177,28 +177,42 @@ test_analyses <- make.ds.analysis(dfmodel = ~ 1,
 # # Generate a single instance of a survey: a population, set of transects
 # # and the resulting distance data
 # test_survey <- run.survey(test_sim)
+```
 
-# 1. Extract the spatial objects and distance data from your custom lists
+```{r}
+# 1. Extract the spatial objects and distance data
 pop_df <- test_sim_truth$population@population 
 trans_sf <- test_survey$transects@samplers
 obs_df <- test_survey$dist_data
 
-# 2. Flag detected animals AND convert the raw x/y coordinates to spatial sf points
-pop_sf <- pop_df |> 
-  mutate(Status = if_else(as.character(individual) %in% as.character(obs_df$object), 
-                          "Detected", "Missed")) |> 
-  st_as_sf(coords = c("x", "y"), crs = st_crs(test_region@region)) # Convert to sf for ggplot
+# 2. Extract strictly valid detections and create a coordinate signature
+# We filter out NAs, then bind the x and y coordinates together. 
+# Rounding to 3 decimals ensures a perfect match despite floating-point quirks.
+valid_obs <- obs_df[!is.na(obs_df$distance), ]
+detected_coords <- paste(round(valid_obs$x, 3), round(valid_obs$y, 3))
 
-# 3. Build the plot
+# 3. Flag detected animals using exact spatial coordinates, then convert to sf
+pop_sf <- pop_df |> 
+  mutate(Status = if_else(paste(round(x, 3), round(y, 3)) %in% detected_coords, 
+                          "Detected", "Missed")) |> 
+  st_as_sf(coords = c("x", "y"), crs = st_crs(test_region@region))
+
+# 4. Build the plot using geom_sf to perfectly align all spatial layers
 ggplot() +
+  # Base layer: The study region
   geom_sf(data = test_region@region, fill = "white", color = "black", linewidth = 0.5) +
+  
+  # Transects layer: Call the samplers
   geom_sf(data = trans_sf, color = "blue", linewidth = 0.8) +
-  geom_sf(data = pop_sf, aes(color = Status), size = 1.2) +
+  
+  # Animal layer: True population, highlighting detected animals in red
+  geom_sf(data = pop_sf, aes(color = Status), size = 1.2, alpha = 0.8) +
+  
   scale_color_manual(values = c("Detected" = "red", "Missed" = "grey80")) +
   theme_minimal() +
   labs(
-    title = "Simulated Survey with Detections",
-    subtitle = paste("Detected:", nrow(obs_df), "of", nrow(pop_sf)),
+    title = "Simulated Survey Execution",
+    subtitle = paste("Transect Type:", points_or_lines, "| Detected:", length(detected_coords), "of", nrow(pop_sf)),
     color = "Animal Status"
   )
 
