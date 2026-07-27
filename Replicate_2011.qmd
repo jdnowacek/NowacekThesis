@@ -28,13 +28,13 @@ source(here::here("Functions4.R"))
 # Constants
 
 ```{r}
-true_N <- 6000
+true_N <- 10200
 
 points_or_lines = "point"
 
 trunc_dist <- 200
 scale_parameter <- 70
-design_spacing <- 2236
+design_spacing <- 1000
 
 density_grid_spacing <- 100
 
@@ -119,6 +119,8 @@ density_true4 <- make_hotspot_density(region, my_hotspots4)
 densities <- list(density_true1, density_true2, density_true3, density_true4)
 ```
 
+## Density Plot
+
 ```{r}
 ggplot() +
   # Assuming the first list element contains the sf density grid
@@ -181,16 +183,50 @@ test_analyses <- make.ds.analysis(dfmodel = ~ 1,
 # # and the resulting distance data
 # test_survey <- run.survey(test_sim)
 
+# # 1. Extract the spatial objects and distance data from your custom lists
+# pop_df <- test_sim_truth$population@population 
+# trans_sf <- test_survey$transects@samplers
+# obs_df <- test_survey$dist_data
+# 
+# # 2. Flag detected animals AND convert the raw x/y coordinates to spatial sf points
+# pop_sf <- pop_df |> 
+#   mutate(Status = if_else(as.character(individual) %in% as.character(obs_df$object), 
+#                           "Detected", "Missed")) |> 
+#   st_as_sf(coords = c("x", "y"), crs = st_crs(test_region@region)) # Convert to sf for ggplot
+# 
+# # 3. Build the plot
+# ggplot() +
+#   geom_sf(data = test_region@region, fill = "white", color = "black", linewidth = 0.5) +
+#   geom_sf(data = trans_sf, color = "blue", linewidth = 0.8) +
+#   geom_sf(data = pop_sf, aes(color = Status), size = 1.2) +
+#   scale_color_manual(values = c("Detected" = "red", "Missed" = "grey80")) +
+#   theme_minimal() +
+#   labs(
+#     title = "Simulated Survey with Detections",
+#     subtitle = paste("Detected:", nrow(obs_df), "of", nrow(pop_sf)),
+#     color = "Animal Status"
+#   )
+
 # 1. Extract the spatial objects and distance data from your custom lists
 pop_df <- test_sim_truth$population@population 
 trans_sf <- test_survey$transects@samplers
-obs_df <- test_survey$dist_data
 
-# 2. Flag detected animals AND convert the raw x/y coordinates to spatial sf points
+# Filter out empty transects (NAs) from the distance data
+obs_df <- test_survey$dist_data |> 
+  filter(!is.na(distance))
+
+# 2. Flag detected animals by matching their exact spatial coordinates
+# Since dsims overrides the 'object' ID with a sequential observation index,
+# we cross-reference the x and y coordinates to find the exact animals.
 pop_sf <- pop_df |> 
-  mutate(Status = if_else(as.character(individual) %in% as.character(obs_df$object), 
-                          "Detected", "Missed")) |> 
-  st_as_sf(coords = c("x", "y"), crs = st_crs(test_region@region)) # Convert to sf for ggplot
+  mutate(
+    Status = if_else(
+      paste0(x, "_", y) %in% paste0(obs_df$x, "_", obs_df$y), 
+      "Detected", 
+      "Missed"
+    )
+  ) |> 
+  st_as_sf(coords = c("x", "y"), crs = st_crs(test_region@region))
 
 # 3. Build the plot
 ggplot() +
@@ -213,9 +249,9 @@ ggplot() +
 ```
 
 
-## For each region:
+# Main Simulation block
 
-```{r, echo=FALSE, message=FALSE}
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
 num_cores <- max(1, parallel::detectCores() - 2)
 plan(multisession, workers = num_cores)
 
@@ -227,7 +263,6 @@ all_runs <- future_map(1:outer_loop_reps, function(b) {
 
   inner_results <- map(seq_along(densities), function(i) {
 
-    # 1. Generate Population & Survey (This rarely fails)
     sim_pop <- generate_simulated_pop(
       region = region,
       density_true = densities[[i]]
@@ -240,149 +275,116 @@ all_runs <- future_map(1:outer_loop_reps, function(b) {
       spacing = design_spacing,
       truncation = trunc_dist
     )
+    
+    n_det <- nrow(survey_results$obsdata)
 
-    # 2. Defensively wrap all model fitting in tryCatch
-    safe_iteration <- tryCatch({
+    # Pre-build a baseline NA row. If models fail, we instantly return this.
+    res_row <- tibble(
+      iteration = b, scenario = paste("Scenario", i),
+      N_hat = NA_real_, n_detections = n_det, true_analytic_se = NA_real_,
+      se_R2 = NA_real_, se_R3 = NA_real_, se_S1 = NA_real_, se_S2 = NA_real_,
+      se_O1 = NA_real_, se_O2 = NA_real_, se_P2 = NA_real_, se_P3 = NA_real_,
+      se_striplet = NA_real_, se_boxlet = NA_real_, se_boot_std = NA_real_, se_boot_disc = NA_real_
+    )
+    
+    # Pre-build padding for the convergence plot in case this iteration fails
+    boot_padding <- if (b == outer_loop_reps) list(Standard = rep(NA_real_, bootstrap_reps), Discrete = rep(NA_real_, bootstrap_reps)) else NULL
 
-      ds_results <- fit_ds(
-        region = region,
-        dist_data = survey_results$dist_data,
-        obsdata = survey_results$obsdata,
-        segdata = survey_results$segdata,
-        transect_type = points_or_lines,
-        truncation = trunc_dist
-      )
+# 2. Fit ds() - Circuit Breaker 1
+    ds_results <- try(fit_ds(
+      region = region,
+      dist_data = survey_results$dist_data,
+      obsdata = survey_results$obsdata,
+      segdata = survey_results$segdata,
+      transect_type = points_or_lines,
+      truncation = trunc_dist
+    ), silent = TRUE)
 
-      dsm_results <- fit_dsm_and_surface(
-        obsdata = survey_results$obsdata,
-        segdata = survey_results$segdata,
-        ds_model = ds_results$ds_model,
-        region = region,
-        N_hat = ds_results$N_hat,
-        transect_type = points_or_lines,
-        x_space = density_grid_spacing,
-        y_space = density_grid_spacing
-      )
-      
-      true_analytical_se <- analytic_se(
-        region = region,
-        dsm_model = dsm_results$dsm,
-        ds_results = ds_results,
-        transect_type = points_or_lines,
-        spacing = design_spacing,
-        truncation = trunc_dist,
-        phase_grid = 100 
-      )
+    # If ds() crashes (too few detections), abort and jump to next iteration
+    if (inherits(ds_results, "try-error") || is.null(ds_results)) {
+      return(list(row = res_row, bootstraps = boot_padding))
+    }
 
-      spatial_variances <- striplet_boxlet(
-        region = region,
-        segdata = survey_results$segdata,
-        dsm_model = dsm_results$dsm,
-        dsm_surface = dsm_results$density_surface,
-        ds_results = ds_results,
-        transect_type = points_or_lines,
-        spacing = design_spacing,
-        truncation = trunc_dist
-      )
+    # If ds() succeeds, lock in EVERYTHING we know so far immediately!
+    res_row$N_hat <- ds_results$N_hat
+    res_row$se_R2 <- ds_results$analytical_variances$se_N_R2 %||% NA_real_
+    res_row$se_R3 <- ds_results$analytical_variances$se_N_R3 %||% NA_real_
+    res_row$se_S1 <- ds_results$analytical_variances$se_N_S1 %||% NA_real_
+    res_row$se_S2 <- ds_results$analytical_variances$se_N_S2 %||% NA_real_
+    res_row$se_O1 <- ds_results$analytical_variances$se_N_O1 %||% NA_real_
+    res_row$se_O2 <- ds_results$analytical_variances$se_N_O2 %||% NA_real_
+    res_row$se_P2 <- ds_results$analytical_variances$se_N_P2 %||% NA_real_
+    res_row$se_P3 <- ds_results$analytical_variances$se_N_P3 %||% NA_real_
 
-      if (points_or_lines == "line") {
-        R2_est <- ds_results$analytical_variances$se_N_R2 %||% NA_real_
-        R3_est <- ds_results$analytical_variances$se_N_R3 %||% NA_real_
-        S1_est <- ds_results$analytical_variances$se_N_S1 %||% NA_real_
-        S2_est <- ds_results$analytical_variances$se_N_S2 %||% NA_real_
-        O1_est <- ds_results$analytical_variances$se_N_O1 %||% NA_real_
-        O2_est <- ds_results$analytical_variances$se_N_O2 %||% NA_real_
-        P2_est <- NA_real_
-        P3_est <- NA_real_
-        striplet_est <- spatial_variances$se_N_striplet %||% NA_real_
-        boxlet_est <- NA_real_
-      } else {
-        R2_est <- NA_real_
-        R3_est <- NA_real_
-        S1_est <- NA_real_
-        S2_est <- NA_real_
-        O1_est <- NA_real_
-        O2_est <- NA_real_
-        P2_est <- ds_results$analytical_variances$se_N_P2 %||% NA_real_
-        P3_est <- ds_results$analytical_variances$se_N_P3 %||% NA_real_
-        striplet_est <- NA_real_
-        boxlet_est <- spatial_variances$se_N_boxlet %||% NA_real_
-      }
+    # 3. Fit dsm() - Circuit Breaker 2
+    dsm_results <- try(fit_dsm_and_surface(
+      obsdata = survey_results$obsdata,
+      segdata = survey_results$segdata,
+      ds_model = ds_results$ds_model,
+      region = region,
+      N_hat = ds_results$N_hat,
+      transect_type = points_or_lines,
+      x_space = density_grid_spacing,
+      y_space = density_grid_spacing
+    ), silent = TRUE)
 
-      standard <- get_bootstrap(
-        region = region,
-        population_description = dsm_results$population_description,
-        sigma_hat = ds_results$sigma_hat,
-        transect_type = points_or_lines,
-        reps = bootstrap_reps
-      )
+    # If dsm() crashes, abort! (But now res_row safely contains N_hat, P2, and P3!)
+    if (inherits(dsm_results, "try-error") || is.null(dsm_results)) {
+      return(list(row = res_row, bootstraps = boot_padding))
+    }
 
-      disc_density <- get_bootstrap_disc_density(
-        region = region,
-        population_description = dsm_results$population_description,
-        sigma_hat = ds_results$sigma_hat,
-        transect_type = points_or_lines,
-        reps = bootstrap_reps
-      )
+    # 4. If we reach here, models fit perfectly. Run analytical and bootstrap math normally.
+    true_analytical_se <- analytic_se(
+      region = region,
+      dsm_model = dsm_results$dsm,
+      ds_results = ds_results,
+      transect_type = points_or_lines,
+      spacing = design_spacing,
+      truncation = trunc_dist,
+      phase_grid = 10 
+    )
 
-      res_row <- tibble(
-        iteration = b,
-        scenario = paste("Scenario", i),
-        N_hat = ds_results$N_hat,
-        n_detections = nrow(survey_results$obsdata),
-        true_analytic_se = true_analytical_se$se,       # <- Added missing line here!
-        se_R2 = R2_est,
-        se_R3 = R3_est,
-        se_S1 = S1_est,
-        se_S2 = S2_est,
-        se_O1 = O1_est,
-        se_O2 = O2_est,
-        se_P2 = P2_est,
-        se_P3 = P3_est,
-        se_striplet = striplet_est,
-        se_boxlet = boxlet_est,
-        se_boot_std = sd(standard$N_hat, na.rm = TRUE),
-        se_boot_disc = sd(disc_density$N_hat, na.rm = TRUE)
-      )
-      
-      list(
-        row = res_row,
-        # Safely pad the fallback with NAs to match the exact length of bootstrap_reps
-        bootstraps = if (b == outer_loop_reps) {
-          list(Standard = rep(NA_real_, bootstrap_reps), 
-               Discrete = rep(NA_real_, bootstrap_reps))
-        } else NULL
-      )
+    spatial_variances <- striplet_boxlet(
+      region = region,
+      segdata = survey_results$segdata,
+      dsm_model = dsm_results$dsm,
+      dsm_surface = dsm_results$density_surface,
+      ds_results = ds_results,
+      transect_type = points_or_lines,
+      spacing = design_spacing,
+      truncation = trunc_dist
+    )
 
-    }, error = function(e) {
-      # 3. THE FALLBACK: If ds() crashes due to zero/low detections, return NAs and keep loop alive
-      res_row <- tibble(
-        iteration = b,
-        scenario = paste("Scenario", i),
-        N_hat = NA_real_,
-        n_detections = nrow(survey_results$obsdata),
-        true_analytic_se = NA_real_,
-        se_R2 = NA_real_,
-        se_R3 = NA_real_,
-        se_S1 = NA_real_,
-        se_S2 = NA_real_,
-        se_O1 = NA_real_,
-        se_O2 = NA_real_,
-        se_P2 = NA_real_,
-        se_P3 = NA_real_,
-        se_striplet = NA_real_,
-        se_boxlet = NA_real_,
-        se_boot_std = NA_real_,
-        se_boot_disc = NA_real_
-      )
+    standard <- get_bootstrap(
+      region = region,
+      population_description = dsm_results$population_description,
+      sigma_hat = ds_results$sigma_hat,
+      transect_type = points_or_lines,
+      reps = bootstrap_reps
+    )
 
-      list(
-        row = res_row,
-        bootstraps = if (b == outer_loop_reps) list(Standard = NA_real_, Discrete = NA_real_) else NULL
-      )
-    })
+    disc_density <- get_bootstrap_disc_density(
+      region = region,
+      population_description = dsm_results$population_description,
+      sigma_hat = ds_results$sigma_hat,
+      transect_type = points_or_lines,
+      reps = bootstrap_reps
+    )
 
-    return(safe_iteration)
+    # Safely update the remaining fields
+    res_row$true_analytic_se <- true_analytical_se$se
+    res_row$se_striplet <- spatial_variances$se_N_striplet %||% NA_real_
+    res_row$se_boxlet <- spatial_variances$se_N_boxlet %||% NA_real_
+    res_row$se_boot_std <- sd(standard$N_hat, na.rm = TRUE)
+    res_row$se_boot_disc <- sd(disc_density$N_hat, na.rm = TRUE)
+
+    # Safely return row and arrays for plotting
+    list(
+      row = res_row,
+      bootstraps = if (b == outer_loop_reps) {
+        list(Standard = standard$N_hat, Discrete = disc_density$N_hat)
+      } else NULL
+    )
 
   })
 
@@ -398,6 +400,8 @@ last_rep_bootstraps <- all_runs[[outer_loop_reps]]$bootstraps
 
 plan(sequential)
 ```
+
+## MC convergence plot
 
 ```{r}
 # Plotting Monte Carlo convergence 
@@ -448,6 +452,8 @@ ggplot(plot_data, aes(x = replicate, y = Running_SD, color = Method)) +
   theme(legend.position = "bottom")
 ```
 
+## Summary table
+
 ```{r}
 sim_summary <- sim_results |>
   group_by(scenario) |>
@@ -474,49 +480,46 @@ print(sim_summary) |>
   kable(digits = 1)
 ```
 
+## Summary plot
 
 ```{r}
 desired_order <- c(
   "se_R2", "se_R3", "se_S1", "se_S2", "se_O1", "se_O2",
-  "se_P2", "se_P3", "se_striplet", "se_boxlet",
+  "se_P2", "se_P3", "se_striplet", "se_boxlet", "true_analytic_se",
   "se_boot_std", "se_boot_disc"
 )
 
 plot_dat <- sim_results |>
-  pivot_longer(
-    cols = all_of(desired_order),
-    values_drop_na = TRUE 
-  ) |>
-  mutate(name = factor(name, levels = desired_order)) |>
-  filter(value < 1000)
-
-plot_dat <- plot_dat |>
+  mutate(scenario = factor(scenario, levels = unique(scenario))) |>
   group_by(scenario) |>
-  mutate(
-    true_ish_se = sd(N_hat, na.rm = TRUE),                         # The Empirical Baseline
-    mean_analytic_se = mean(true_analytic_se, na.rm = TRUE)        # The Mathematical Baseline
-  )
+  mutate(true_ish_se = sd(N_hat, na.rm = TRUE)) |>
+  ungroup() |>
+  pivot_longer(
+    cols = any_of(desired_order),
+    names_to = "name",
+    values_to = "value",
+    values_drop_na = TRUE
+  ) |>
+  mutate(name = factor(name, levels = desired_order)) 
 
 ggplot(plot_dat, aes(x = name, y = value)) +
   geom_boxplot() +
   geom_hline(aes(yintercept = true_ish_se), color = "red", linetype = "dashed", linewidth = 0.8) +
-  geom_hline(aes(yintercept = mean_analytic_se), color = "green", linetype = "solid", linewidth = 0.8, alpha = 0.7) +
-  facet_grid(rows = vars(scenario)) +
+  facet_wrap(~ scenario, ncol = 1, scales = "free_x", drop = FALSE) + 
   labs(
     title = "Variance Estimator Performance across Realizations",
-    subtitle = "Red Dashed = Empirical True SE | Green Solid = Mathematical True SE",
+    subtitle = "Red Dashed = Empirical True SE",
     x = "Estimator Type",
     y = "Estimated Standard Error"
   ) +
-  theme_bw() +
-  # ylim(0, 400) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  theme_bw()
 ```
 
+## Saving
 
 ```{r}
-saveRDS(sim_results, file = "P1_small.R")
-ggsave(filename = "P1_small_plot.png")
+saveRDS(sim_results, file = here::here("Short_sim_results", "P12_small.rds"))
+ggsave(filename = here::here("Short_sim_results", "P12_small_plot.png"))
 ```
 
 

@@ -190,11 +190,11 @@ set.seed(42)
 
 true_N <- 6400
 
-points_or_lines = "line"
+points_or_lines = "point"
 
-trunc_dist <- 40
-scale_parameter <- 15
-design_spacing <- 2000
+trunc_dist <- 200
+scale_parameter <- 70
+design_spacing <- 1000
 
 density_grid_spacing <- 100
 
@@ -301,7 +301,7 @@ result <- analytic_se(
   spacing = design_spacing,
   truncation = trunc_dist,
   integration_spacing = 100, ## the size of the boxlets (eg 1x1 boxes here)
-  phase_grid = 100 ## the number of starting positions used in numerical integration 
+  phase_grid = 10 ## the number of starting positions used in numerical integration 
 )
 
 result$se
