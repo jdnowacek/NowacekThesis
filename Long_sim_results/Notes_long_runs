@@ -5,10 +5,10 @@ All runs were based on the simulation parameters pdf
 note: All population size simulations were figured out on the uniform density, 
 I will just assume that the other population sizes work.
 
-All runs had 20 outer loop reps and 20 MC reps
+All runs had 100 outer loop reps and 250 MC reps
 
-1-12 both in file name and the following pop sizes are 1 is top left, 
-then across, then to the next row
+1-12 both in file name and the following pop sizes are 1 is top left in my
+handwritten document, then across, then to the next row
 
 Exact population numbers were rounded a bit:
 

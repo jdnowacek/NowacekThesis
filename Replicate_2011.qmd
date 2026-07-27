@@ -28,20 +28,20 @@ source(here::here("Functions4.R"))
 # Constants
 
 ```{r}
-true_N <- 10200
+true_N <- 1630
 
-points_or_lines = "point"
+points_or_lines = "line"
 
-trunc_dist <- 200
-scale_parameter <- 70
-design_spacing <- 1000
+phase_grid_val <- 100
+
+trunc_dist <- 40
+scale_parameter <- 15
+design_spacing <- 2000
 
 density_grid_spacing <- 100
 
-
-
-outer_loop_reps <- 20
-bootstrap_reps <- 20
+outer_loop_reps <- 10
+bootstrap_reps <- 25
 ```
 
 # Code
@@ -252,7 +252,7 @@ ggplot() +
 # Main Simulation block
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
-num_cores <- max(1, parallel::detectCores() - 2)
+num_cores <- max(1, parallel::detectCores() - 4)
 plan(multisession, workers = num_cores)
 
 num_scenarios <- length(densities)
@@ -290,7 +290,7 @@ all_runs <- future_map(1:outer_loop_reps, function(b) {
     # Pre-build padding for the convergence plot in case this iteration fails
     boot_padding <- if (b == outer_loop_reps) list(Standard = rep(NA_real_, bootstrap_reps), Discrete = rep(NA_real_, bootstrap_reps)) else NULL
 
-# 2. Fit ds() - Circuit Breaker 1
+    # 2. Fit ds() - Circuit Breaker 1
     ds_results <- try(fit_ds(
       region = region,
       dist_data = survey_results$dist_data,
@@ -341,7 +341,7 @@ all_runs <- future_map(1:outer_loop_reps, function(b) {
       transect_type = points_or_lines,
       spacing = design_spacing,
       truncation = trunc_dist,
-      phase_grid = 10 
+      phase_grid = phase_grid_val
     )
 
     spatial_variances <- striplet_boxlet(
@@ -518,8 +518,8 @@ ggplot(plot_dat, aes(x = name, y = value)) +
 ## Saving
 
 ```{r}
-saveRDS(sim_results, file = here::here("Short_sim_results", "P12_small.rds"))
-ggsave(filename = here::here("Short_sim_results", "P12_small_plot.png"))
+saveRDS(sim_results, file = here::here("Long_sim_results", "L1.rds"))
+ggsave(filename = here::here("Long_sim_results", "L1_plot.png"))
 ```
 
 
