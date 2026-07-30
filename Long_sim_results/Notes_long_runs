@@ -1,5 +1,7 @@
 Just a few notes for the documents in this file:
 
+Based on the convergence test with 1500 reps, 500 reps looks like a good baseline rather than 250. 
+
 All runs were based on the simulation parameters pdf
 
 note: All population size simulations were figured out on the uniform density, 
@@ -10,22 +12,20 @@ All runs had 100 outer loop reps and 250 MC reps
 1-12 both in file name and the following pop sizes are 1 is top left in my
 handwritten document, then across, then to the next row
 
-Exact population numbers were rounded a bit:
-
 Lines:
 
-1:  1630
-2:  6400
-3:  16000
-4:  530
-5:  2130
-6:  5400
-7:  320
-8:  1280
-9:  3250
-10: 160
-11: 650
-12: 1600
+1:  1634
+2:  6377
+3:  15899
+4:  532
+5:  2133
+6:  5354
+7:  319
+8:  1282
+9:  3240
+10: 161
+11: 644
+12: 1612
 
 The spacings for lines were 2000, 667, 400, 200 
 for 5, 15, 25, and 50 transects respectively
@@ -36,18 +36,18 @@ Open to notes on that approach, 100x100 was crashing the simulation immediately.
 
 Points:
 
-1:  6000
-2:  20000
-3:  37800
-4:  2500
-5:  12000
-6:  24500
-7:  1800
-8:  6800
-9:  17000
-10: 1150
-11: 4000
-12: 10200
+1:  6006
+2:  20070
+3:  37785
+4:  2527
+5:  12111
+6:  24573
+7:  1715
+8:  6739
+9:  16975
+10: 1125
+11: 3983
+12: 10164
 
 The spacings for lines were 2236, 1581, 1291, 1000 
 for 10, 20, 30, and 50 transects respectively

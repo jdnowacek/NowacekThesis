@@ -28,7 +28,7 @@ source(here::here("Functions4.R"))
 # Constants
 
 ```{r}
-true_N <- 1630
+true_N <- 1280
 
 points_or_lines = "line"
 
@@ -36,12 +36,12 @@ phase_grid_val <- 100
 
 trunc_dist <- 40
 scale_parameter <- 15
-design_spacing <- 2000
+design_spacing <- 400
 
 density_grid_spacing <- 100
 
-outer_loop_reps <- 10
-bootstrap_reps <- 25
+outer_loop_reps <- 100
+bootstrap_reps <- 500
 ```
 
 # Code
@@ -252,7 +252,7 @@ ggplot() +
 # Main Simulation block
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
-num_cores <- max(1, parallel::detectCores() - 4)
+num_cores <- max(1, parallel::detectCores() - 2)
 plan(multisession, workers = num_cores)
 
 num_scenarios <- length(densities)
@@ -414,7 +414,7 @@ cum_sd <- function(x, expected_length = bootstrap_reps) {
   }
   
   # Start from 2 because you can't get an SD of a single number
-  sapply(2:length(x), function(j) sd(x[1:j], na.rm = TRUE))
+  sapply(25:length(x), function(j) sd(x[1:j], na.rm = TRUE))
 }
 
 # Build plot data dynamically by looping through the saved list of the last iteration
@@ -424,7 +424,7 @@ plot_data <- bind_rows(lapply(1:num_scenarios, function(i) {
   boot_disc <- last_rep_bootstraps[[i]]$Discrete
   
   tibble(
-    replicate = 2:bootstrap_reps,
+    replicate = 25:bootstrap_reps,
     Scenario = paste("Scenario", i),
     Standard = cum_sd(boot_std),
     Discrete = cum_sd(boot_disc)
@@ -439,6 +439,7 @@ plot_data <- bind_rows(lapply(1:num_scenarios, function(i) {
 # Generate the facet plot
 ggplot(plot_data, aes(x = replicate, y = Running_SD, color = Method)) +
   geom_line(alpha = 0.8, linewidth = 1) +
+  geom_hline(aes(yintercept = 144), color = "green") +
   facet_wrap(~Scenario, scales = "free_y") + # 'free_y' allows each density to have its own y-axis scale
   scale_color_manual(values = c("Standard" = "blue", "Discrete" = "red")) +
   labs(
@@ -451,6 +452,12 @@ ggplot(plot_data, aes(x = replicate, y = Running_SD, color = Method)) +
   theme_bw() +
   theme(legend.position = "bottom")
 ```
+
+```{r}
+# saveRDS(plot_data, file = here::here("Long_sim_results", "convergence_results_1500.rds"))
+# ggsave(filename = here::here("Long_sim_results", "convergence_results_1500_plot.png"))
+```
+
 
 ## Summary table
 
@@ -504,6 +511,7 @@ plot_dat <- sim_results |>
 
 ggplot(plot_dat, aes(x = name, y = value)) +
   geom_boxplot() +
+    geom_hline(aes(yintercept = 144), color = "green") +
   geom_hline(aes(yintercept = true_ish_se), color = "red", linetype = "dashed", linewidth = 0.8) +
   facet_wrap(~ scenario, ncol = 1, scales = "free_x", drop = FALSE) + 
   labs(
@@ -518,8 +526,8 @@ ggplot(plot_dat, aes(x = name, y = value)) +
 ## Saving
 
 ```{r}
-saveRDS(sim_results, file = here::here("Long_sim_results", "L1.rds"))
-ggsave(filename = here::here("Long_sim_results", "L1_plot.png"))
+saveRDS(sim_results, file = here::here("Long_sim_results", "L8.rds"))
+ggsave(filename = here::here("Long_sim_results", "L8_plot.png"), width = 9, height = 10)
 ```
 
 

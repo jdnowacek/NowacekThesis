@@ -664,7 +664,7 @@ striplet_boxlet <- function(region,
   cv_Pa_sq <- ds_results$cv_Pa_sq
   sigma_hat <- ds_results$sigma_hat
   
-  # Local Delta Method
+  # Local delta method
   apply_delta <- function(var_ER, erhat) {
     cv_ER_sq <- var_ER / (erhat^2)
     var_N <- (N_hat^2) * (cv_ER_sq + cv_Pa_sq)
@@ -687,14 +687,14 @@ striplet_boxlet <- function(region,
     }
     musum <- sum(muvec, na.rm = TRUE) # Now exactly equals N_hat
     
-    # Determine the cell width across the X-axis 
+    # Determine the cell width across the x-axis 
     
     bbox <- sf::st_bbox(region@region)
     y_length <- as.numeric(bbox["ymax"] - bbox["ymin"])
     x_min <- as.numeric(bbox["xmin"])
     x_max <- as.numeric(bbox["xmax"])
     
-    # Determine the discrete cell width across the X-axis 
+    # Determine the discrete cell width across the x-axis 
     
     # cell_width <- min(diff(sort(unique(midvec))))
     cell_width <- density_grid_spacing
@@ -736,15 +736,16 @@ striplet_boxlet <- function(region,
       lower_bound_clamped <- pmax(lower_bound, -truncation)
       upper_bound_clamped <- pmin(upper_bound, truncation)
       
-      # Integrate the area under the curve ONLY within the observable window.
-      # If a cell is entirely outside the truncation distance, the clamped bounds 
-      # will cross over each other. pmax(0, ...) catches this and safely forces it to 0.
+      # Integrate the area under the curve within the observable window
+      # If a cell is entirely outside the truncation distance, the clamped 
+      # bounds will cross over each other
+      # pmax(0, ...) catches this and safely forces it to 0.
       integral_val <- sqrt(2 * pi) * sigma_hat * 
         pmax(0, pnorm(upper_bound_clamped, mean = 0, sd = sigma_hat) - 
                pnorm(lower_bound_clamped, mean = 0, sd = sigma_hat)
         )
       
-      # Average probability of detection for an animal ANYWHERE in the discrete cell
+      # Average probability of detection for an animal in the discrete cell
       g_b <- integral_val / cell_width
       
       Abvec[b_idx] <- sum(muvec * g_b, na.rm = TRUE)
@@ -825,7 +826,7 @@ striplet_boxlet <- function(region,
     p_j[is.na(p_j)] <- 0 
     p_j[p_j < 0] <- 0 
     
-    # Safely compute Average Detection Probability (P_a)
+    # Safely compute average detection probability (P_a)
     fitted_probs <- m1$ddf$fitted
     if (is.null(fitted_probs) || length(fitted_probs) == 0) {
       P_a <- summary(m1$ddf)$average.p
@@ -833,7 +834,7 @@ striplet_boxlet <- function(region,
       P_a <- length(fitted_probs) / sum(1 / fitted_probs)
     }
     
-    # Simulate the Grid Shifts (b)
+    # Simulate the grid shifts (b)
     shift_res <- spacing / 5 
     b_x <- seq(0, spacing - shift_res, by = shift_res)
     b_y <- seq(0, spacing - shift_res, by = shift_res)
@@ -857,22 +858,31 @@ striplet_boxlet <- function(region,
     #   shifted_grid$X <- shifted_grid$X + shifts$x[i]
     #   shifted_grid$Y <- shifted_grid$Y + shifts$y[i]
     #   
-    #   shifted_points <- sf::st_as_sf(shifted_grid, coords = c("X", "Y"), crs = sf::st_crs(boxlets_sf))
+    #   shifted_points <- sf::st_as_sf(shifted_grid, coords = c("X", "Y"), 
+    #                                crs = sf::st_crs(boxlets_sf))
     #   shifted_buffers <- sf::st_buffer(shifted_points, dist = truncation)
     #   shifted_survey_area <- sf::st_union(shifted_buffers)
     #   
-    #   touching_idx <- unlist(sf::st_intersects(boxlets_sf, shifted_survey_area))
+    #   touching_idx <- unlist(sf::st_intersects(boxlets_sf, 
+    #                                            shifted_survey_area))
     #   
     #   if (length(touching_idx) > 0) {
     #     candidate_boxlets <- boxlets_sf[touching_idx, ]
-    #     clipped_boxlets <- suppressWarnings(sf::st_intersection(candidate_boxlets, shifted_survey_area))
-    #     clipped_boxlets$clipped_area <- as.numeric(sf::st_area(clipped_boxlets))
-    #     clipped_boxlets$weight <- clipped_boxlets$clipped_area / clipped_boxlets$area
-    #     Q_b <- sum(clipped_boxlets$p_j * clipped_boxlets$weight, na.rm = TRUE) * P_a
+    #   clipped_boxlets <-
+    #    suppressWarnings(sf::st_intersection(candidate_boxlets,
+    #                                         shifted_survey_area))
+    #     clipped_boxlets$clipped_area <- 
+    #       as.numeric(sf::st_area(clipped_boxlets))
+    #     
+    #     clipped_boxlets$weight <- 
+    #       clipped_boxlets$clipped_area / clipped_boxlets$area
+    #     
+    #     Q_b <- sum(clipped_boxlets$p_j * 
+    #                  clipped_boxlets$weight, na.rm = TRUE) * P_a
     #   } else {
     #     Q_b <- 0
     #   }
-    #   
+    # 
     #   A_b[i] <- N_hat * Q_b
     # }
     
@@ -883,7 +893,8 @@ striplet_boxlet <- function(region,
       shifted_grid$Y <- shifted_grid$Y + shifts$y[i]
       
       # shifted_points <- sf::st_as_sf(shifted_grid, coords = c("X", "Y"))
-      shifted_points <- sf::st_as_sf(shifted_grid, coords = c("X", "Y"), crs = sf::st_crs(region_sf))
+      shifted_points <- sf::st_as_sf(shifted_grid, coords = c("X", "Y"), 
+                                     crs = sf::st_crs(region_sf))
       shifted_buffers <- sf::st_buffer(shifted_points, dist = truncation)
       shifted_survey_area <- sf::st_union(shifted_buffers)
       
@@ -954,7 +965,7 @@ get_bootstrap <- function(region,
   
   design <- make.design(
     region        = region,
-    transect.type = transect_type,  # Evaluates the literal variable passed ("point" or "line")
+    transect.type = transect_type,
     design        = "systematic",
     spacing       = spacing,
     edge.protocol = "minus",
@@ -987,132 +998,133 @@ get_bootstrap <- function(region,
 ## and the survey design to generate an estimated N_hat 
 ## Run this multiple times to estimate a SE by bootstraps
 
-get_bootstrap_invcdf <- function(region,
-                                 population_description,
-                                 sigma_hat,
-                                 transect_type = points_or_lines,
-                                 reps = bootstrap_reps,
-                                 # angle = design_angle,
-                                 spacing = design_spacing,
-                                 truncation = trunc_dist) {
-  
-  # Pull the density surface from the population description
-  density_surface <- population_description@density@density.surface[[1]]
-  N_total <- as.integer(round(population_description@N))
-  
-  # Calculate expected N for each cell based on density * area
-  density_surface <- density_surface |>
-    mutate(N_expected = density * area)
-  
-  # Sum over Y to get the PDF, then "integrate" to get the CDF over X
-  marg_x <- density_surface |>
-    group_by(x) |>
-    summarize(N_x = sum(N_expected, na.rm = TRUE), .groups = "drop") |>
-    mutate(prob_x = N_x / sum(N_x), cdf_x = cumsum(prob_x))
-  
-  # Split and calculate Conditional CDFs for Y given X
-  cond_y_list <- density_surface |>
-    group_by(x) |>
-    mutate(prob_y = N_expected / sum(N_expected, na.rm = TRUE), cdf_y = cumsum(prob_y)) |>
-    split(~x)
-  
-  # Create a baseline uniform density to act as a placeholder for a valid S4 initialization
-  dummy_density <- dsims::make.density(region = region, 
-                                       x.space = spacing, 
-                                       constant = 1)
-  
-  dummy_pop_desc <- dsims::make.population.description(region = region, 
-                                                       density = dummy_density, 
-                                                       N = N_total, 
-                                                       fixed.N = TRUE)
-  
-  detect <- make.detectability(key.function = "hn", 
-                               scale.param = sigma_hat, 
-                               truncation = truncation)
-  
-  # Create the survey design 
-  design <- make.design(
-    region        = region,
-    transect.type = transect_type, 
-    design        = "systematic",
-    spacing       = spacing,
-    edge.protocol = "minus",
-    # design.angle  = angle,
-    truncation    = truncation
-  )
-  
-  N_hat_results <- rep(NA, reps)
-  
-  # Bootstrap loop
-  for (b in 1:reps) {
-    
-    # place animals
-    # Use "Owen" scrambling to randomly permute the QMC sequence on every loop iteration
-    U <- sobol(n = N_total, d = 2, randomize = "Owen", seed = b)
-    
-    animal_x <- numeric(N_total)
-    animal_y <- numeric(N_total)
-    
-    # Perform Inverse CDF Sampling
-    for (i in 1:N_total) {
-      x_idx <- which(marg_x$cdf_x >= U[i, 1])[1]
-      exact_x <- marg_x$x[x_idx]
-      animal_x[i] <- exact_x
-      
-      y_dist <- cond_y_list[[as.character(exact_x)]]
-      y_idx <- which(y_dist$cdf_y >= U[i, 2])[1]
-      animal_y[i] <- y_dist$y[y_idx]
-    }
-    
-    # build s4 object for the generated population
-    realized_population <- dsims::generate.population(object = dummy_pop_desc, 
-                                                      detectability = detect, 
-                                                      region = region)
-    
-    # Overwrite
-    native_pop <- realized_population@population
-    native_pop$x <- animal_x
-    native_pop$y <- animal_y
-    realized_population@population <- as.data.frame(native_pop)
-    
-    # run survey
-    transects <- generate.transects(design)
-    
-    if (transect_type == "point") {
-      survey <- new("Survey.PT", 
-                    population = realized_population, 
-                    transect = transects, 
-                    rad.truncation = truncation)
-    } else {
-      survey <- new("Survey.LT", 
-                    population = realized_population, 
-                    transect = transects, 
-                    perp.truncation = truncation)
-    }
-    
-    survey_run <- suppressWarnings(run.survey(survey, region = region))
-    obs_data <- survey_run@dist.data
-    
-    # fit model
-    if (nrow(obs_data) > 0) {
-      tryCatch({
-        capture.output(
-          m2 <- ds(data = obs_data, 
-                   transect = transect_type, key = "hn", 
-                   adjustment = NULL, 
-                   truncation = truncation, 
-                   quiet = TRUE)
-        )
-        N_hat_results[b] <- as.numeric(m2$dht$individuals$N$Estimate)
-        
-      }, error = function(e) {
-        N_hat_results[b] <- NA
-      })
-    }
-  }
-  
-  data.frame(replicate = seq_len(reps), N_hat = N_hat_results)
-}
+# get_bootstrap_invcdf <- function(region,
+#                                  population_description,
+#                                  sigma_hat,
+#                                  transect_type = points_or_lines,
+#                                  reps = bootstrap_reps,
+#                                  # angle = design_angle,
+#                                  spacing = design_spacing,
+#                                  truncation = trunc_dist) {
+#   
+#   # Pull the density surface from the population description
+#   density_surface <- population_description@density@density.surface[[1]]
+#   N_total <- as.integer(round(population_description@N))
+#   
+#   # Calculate expected N for each cell based on density * area
+#   density_surface <- density_surface |>
+#     mutate(N_expected = density * area)
+#   
+#   # Sum over Y to get the PDF, then "integrate" to get the CDF over X
+#   marg_x <- density_surface |>
+#     group_by(x) |>
+#     summarize(N_x = sum(N_expected, na.rm = TRUE), .groups = "drop") |>
+#     mutate(prob_x = N_x / sum(N_x), cdf_x = cumsum(prob_x))
+#   
+#   # Split and calculate Conditional CDFs for Y given X
+#   cond_y_list <- density_surface |>
+#     group_by(x) |>
+#     mutate(prob_y = N_expected / sum(N_expected, na.rm = TRUE), 
+#            cdf_y = cumsum(prob_y)) |>
+#     split(~x)
+#   
+#   # Create a baseline uniform density to act as a placeholder 
+#   dummy_density <- dsims::make.density(region = region, 
+#                                        x.space = spacing, 
+#                                        constant = 1)
+#   
+#   dummy_pop_desc <- dsims::make.population.description(region = region, 
+#                                                        density = dummy_density, 
+#                                                        N = N_total, 
+#                                                        fixed.N = TRUE)
+#   
+#   detect <- make.detectability(key.function = "hn", 
+#                                scale.param = sigma_hat, 
+#                                truncation = truncation)
+#   
+#   # Create the survey design 
+#   design <- make.design(
+#     region        = region,
+#     transect.type = transect_type, 
+#     design        = "systematic",
+#     spacing       = spacing,
+#     edge.protocol = "minus",
+#     # design.angle  = angle,
+#     truncation    = truncation
+#   )
+#   
+#   N_hat_results <- rep(NA, reps)
+#   
+#   # Bootstrap loop
+#   for (b in 1:reps) {
+#     
+#     # place animals
+#     # Use "Owen" scrambling to randomly permute the QMC sequence on every loop
+#     U <- sobol(n = N_total, d = 2, randomize = "Owen", seed = b)
+#     
+#     animal_x <- numeric(N_total)
+#     animal_y <- numeric(N_total)
+#     
+#     # Perform Inverse CDF Sampling
+#     for (i in 1:N_total) {
+#       x_idx <- which(marg_x$cdf_x >= U[i, 1])[1]
+#       exact_x <- marg_x$x[x_idx]
+#       animal_x[i] <- exact_x
+#       
+#       y_dist <- cond_y_list[[as.character(exact_x)]]
+#       y_idx <- which(y_dist$cdf_y >= U[i, 2])[1]
+#       animal_y[i] <- y_dist$y[y_idx]
+#     }
+#     
+#     # build s4 object for the generated population
+#     realized_population <- dsims::generate.population(object = dummy_pop_desc, 
+#                                                       detectability = detect, 
+#                                                       region = region)
+#     
+#     # Overwrite
+#     native_pop <- realized_population@population
+#     native_pop$x <- animal_x
+#     native_pop$y <- animal_y
+#     realized_population@population <- as.data.frame(native_pop)
+#     
+#     # run survey
+#     transects <- generate.transects(design)
+#     
+#     if (transect_type == "point") {
+#       survey <- new("Survey.PT", 
+#                     population = realized_population, 
+#                     transect = transects, 
+#                     rad.truncation = truncation)
+#     } else {
+#       survey <- new("Survey.LT", 
+#                     population = realized_population, 
+#                     transect = transects, 
+#                     perp.truncation = truncation)
+#     }
+#     
+#     survey_run <- suppressWarnings(run.survey(survey, region = region))
+#     obs_data <- survey_run@dist.data
+#     
+#     # fit model
+#     if (nrow(obs_data) > 0) {
+#       tryCatch({
+#         capture.output(
+#           m2 <- ds(data = obs_data, 
+#                    transect = transect_type, key = "hn", 
+#                    adjustment = NULL, 
+#                    truncation = truncation, 
+#                    quiet = TRUE)
+#         )
+#         N_hat_results[b] <- as.numeric(m2$dht$individuals$N$Estimate)
+#         
+#       }, error = function(e) {
+#         N_hat_results[b] <- NA
+#       })
+#     }
+#   }
+#   
+#   data.frame(replicate = seq_len(reps), N_hat = N_hat_results)
+# }
 
 
 ## uses the population from get_fit, sigma hat from the ds() model,
@@ -1141,8 +1153,10 @@ get_bootstrap_disc_density <- function(region,
                                                na.rm = TRUE)
   cell_dimensions <- sqrt(density_surface$area)
   
-  # Create a baseline uniform density to act as a placeholder for a valid S4 initialization
-  dummy_density <- dsims::make.density(region = region, x.space = 100, constant = 1)
+  # Create a baseline uniform density to act as a placeholder 
+  dummy_density <- dsims::make.density(region = region, 
+                                       x.space = 100, 
+                                       constant = 1)
   dummy_pop_desc <- dsims::make.population.description(
     region = region,
     density = dummy_density,
@@ -1178,9 +1192,12 @@ get_bootstrap_disc_density <- function(region,
     base_y <- rep(density_surface$y, cell_counts)
     base_sizes <- rep(cell_dimensions, cell_counts)
     
-    # Scatter the animals uniformly within the boundaries of their assigned boxlets
-    animal_x <- base_x + runif(N_total, min = -base_sizes/2, max = base_sizes/2)
-    animal_y <- base_y + runif(N_total, min = -base_sizes/2, max = base_sizes/2)
+    # Scatter the animals uniformly within their assigned boxlets
+    animal_x <- base_x + 
+      runif(N_total, min = -base_sizes/2, max = base_sizes/2)
+    
+    animal_y <- base_y + 
+      runif(N_total, min = -base_sizes/2, max = base_sizes/2)
     
     # build population based on those placements
     realized_population <- dsims::generate.population(
@@ -1189,7 +1206,7 @@ get_bootstrap_disc_density <- function(region,
       region = region
     )
     
-    # Overwrite the uniform random X and Y coordinates with your new randomized points
+    # Overwrite the uniform random X and Y coordinates with new positions
     native_pop <- realized_population@population
     native_pop$x <- animal_x
     native_pop$y <- animal_y
@@ -1249,7 +1266,8 @@ analytic_se <- function(region,
                         transect_type,
                         spacing,
                         truncation,
-                        integration_spacing = min(density_grid_spacing, truncation / 2),
+                        integration_spacing = min(density_grid_spacing, 
+                                                  truncation / 2),
                         phase_grid = 20) {
   
   # Set up the region and integration surface
@@ -1364,13 +1382,15 @@ analytic_se <- function(region,
         y = seq(bbox["ymin"] + phases$y[j], bbox["ymax"], by = spacing)
       ) |>
         sf::st_as_sf(coords = c("x", "y"), crs = sf::st_crs(region_sf))
-      samplers <- samplers[lengths(sf::st_intersects(samplers, region_sf)) > 0, ]
+      samplers <- samplers[lengths(sf::st_intersects(samplers, 
+                                                     region_sf)) > 0, ]
       sampled_area <- pi * (truncation^2 - left^2) * nrow(samplers)
     }
     
     # Each animal can be encountered independently by every nearby sampler.
     distance <- sf::st_distance(animal_points, samplers)
-    encounters <- which(distance >= left & distance <= truncation, arr.ind = TRUE)
+    encounters <- which(distance >= left & distance <= truncation, 
+                        arr.ind = TRUE)
     cell <- encounters[, "row"]
     distance <- as.numeric(distance[encounters])
     g <- detection(distance, theta)
@@ -1393,7 +1413,8 @@ analytic_se <- function(region,
     estimator_scale <- area_region / (sampled_area * P_a_global)
     conditional_mean <- numeric(length(cell_abundance))
     encounter_mean <- rowsum(g * influence, cell)
-    conditional_mean[as.integer(rownames(encounter_mean))] <- encounter_mean[, 1]
+    conditional_mean[as.integer(rownames(encounter_mean))] <- 
+      encounter_mean[, 1]
     
     phase_results$Q[j] <- Q
     phase_results$sampled_area[j] <- sampled_area
