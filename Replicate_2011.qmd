@@ -5,7 +5,7 @@ format: html
 
 # Packages
 
-```{r}
+```{r, message=FALSE}
 library(tidyverse)
 library(knitr)
 library(dsims)
@@ -25,10 +25,16 @@ library(future)
 source(here::here("Functions4.R"))
 ```
 
+# Import data
+
+```{r, message=FALSE}
+mcse_10M <- read_csv("mcse_10M_results.csv")
+```
+
 # Constants
 
 ```{r}
-true_N <- 1280
+true_N <- 3240
 
 points_or_lines = "line"
 
@@ -42,6 +48,14 @@ density_grid_spacing <- 100
 
 outer_loop_reps <- 100
 bootstrap_reps <- 500
+
+ten_mil_est <- mcse_10M |>
+  arrange(scenario, density_scenario) |>
+  filter(scenario == 9 & transect == "line") # change this each run
+
+green_lines <- tibble(density = c("Density 1", "Density 2", 
+                                   "Density 3", "Density 4"),
+                      vals = ten_mil_est$mc_se)
 ```
 
 # Code
@@ -163,7 +177,8 @@ test_ds <- fit_ds(
   obsdata = test_survey$obsdata,
   segdata = test_survey$segdata,
   transect_type = points_or_lines,
-  truncation = trunc_dist
+  truncation = trunc_dist,
+  spacing = design_spacing
 )
 
 test_design <- test_survey$design
@@ -280,7 +295,7 @@ all_runs <- future_map(1:outer_loop_reps, function(b) {
 
     # Pre-build a baseline NA row. If models fail, we instantly return this.
     res_row <- tibble(
-      iteration = b, scenario = paste("Scenario", i),
+      iteration = b, density = paste("Density", i),
       N_hat = NA_real_, n_detections = n_det, true_analytic_se = NA_real_,
       se_R2 = NA_real_, se_R3 = NA_real_, se_S1 = NA_real_, se_S2 = NA_real_,
       se_O1 = NA_real_, se_O2 = NA_real_, se_P2 = NA_real_, se_P3 = NA_real_,
@@ -297,7 +312,8 @@ all_runs <- future_map(1:outer_loop_reps, function(b) {
       obsdata = survey_results$obsdata,
       segdata = survey_results$segdata,
       transect_type = points_or_lines,
-      truncation = trunc_dist
+      truncation = trunc_dist,
+      spacing = design_spacing
     ), silent = TRUE)
 
     # If ds() crashes (too few detections), abort and jump to next iteration
@@ -315,6 +331,7 @@ all_runs <- future_map(1:outer_loop_reps, function(b) {
     res_row$se_O2 <- ds_results$analytical_variances$se_N_O2 %||% NA_real_
     res_row$se_P2 <- ds_results$analytical_variances$se_N_P2 %||% NA_real_
     res_row$se_P3 <- ds_results$analytical_variances$se_N_P3 %||% NA_real_
+    res_row$se_P4 <- ds_results$analytical_variances$se_N_P4 %||% NA_real_
 
     # 3. Fit dsm() - Circuit Breaker 2
     dsm_results <- try(fit_dsm_and_surface(
@@ -334,15 +351,15 @@ all_runs <- future_map(1:outer_loop_reps, function(b) {
     }
 
     # 4. If we reach here, models fit perfectly. Run analytical and bootstrap math normally.
-    true_analytical_se <- analytic_se(
-      region = region,
-      dsm_model = dsm_results$dsm,
-      ds_results = ds_results,
-      transect_type = points_or_lines,
-      spacing = design_spacing,
-      truncation = trunc_dist,
-      phase_grid = phase_grid_val
-    )
+    # analytical_se <- analytic_se(
+    #   region = region,
+    #   dsm_model = dsm_results$dsm,
+    #   ds_results = ds_results,
+    #   transect_type = points_or_lines,
+    #   spacing = design_spacing,
+    #   truncation = trunc_dist,
+    #   phase_grid = phase_grid_val
+    # )
 
     spatial_variances <- striplet_boxlet(
       region = region,
@@ -363,26 +380,27 @@ all_runs <- future_map(1:outer_loop_reps, function(b) {
       reps = bootstrap_reps
     )
 
-    disc_density <- get_bootstrap_disc_density(
-      region = region,
-      population_description = dsm_results$population_description,
-      sigma_hat = ds_results$sigma_hat,
-      transect_type = points_or_lines,
-      reps = bootstrap_reps
-    )
+    # disc_density <- get_bootstrap_disc_density(
+    #   region = region,
+    #   population_description = dsm_results$population_description,
+    #   sigma_hat = ds_results$sigma_hat,
+    #   transect_type = points_or_lines,
+    #   reps = bootstrap_reps
+    # )
 
     # Safely update the remaining fields
-    res_row$true_analytic_se <- true_analytical_se$se
+    # res_row$true_analytic_se <- analytical_se$se
     res_row$se_striplet <- spatial_variances$se_N_striplet %||% NA_real_
     res_row$se_boxlet <- spatial_variances$se_N_boxlet %||% NA_real_
     res_row$se_boot_std <- sd(standard$N_hat, na.rm = TRUE)
-    res_row$se_boot_disc <- sd(disc_density$N_hat, na.rm = TRUE)
+    # res_row$se_boot_disc <- sd(disc_density$N_hat, na.rm = TRUE)
 
     # Safely return row and arrays for plotting
     list(
       row = res_row,
       bootstraps = if (b == outer_loop_reps) {
-        list(Standard = standard$N_hat, Discrete = disc_density$N_hat)
+        list(Standard = standard$N_hat)
+             #, Discrete = disc_density$N_hat)
       } else NULL
     )
 
@@ -421,16 +439,16 @@ cum_sd <- function(x, expected_length = bootstrap_reps) {
 plot_data <- bind_rows(lapply(1:num_scenarios, function(i) {
   
   boot_std <- last_rep_bootstraps[[i]]$Standard
-  boot_disc <- last_rep_bootstraps[[i]]$Discrete
+  # boot_disc <- last_rep_bootstraps[[i]]$Discrete
   
   tibble(
     replicate = 25:bootstrap_reps,
-    Scenario = paste("Scenario", i),
-    Standard = cum_sd(boot_std),
-    Discrete = cum_sd(boot_disc)
+    Density = paste("Density", i),
+    Standard = cum_sd(boot_std)
+    # Discrete = cum_sd(boot_disc)
   ) |> 
     pivot_longer(
-      cols = c(Standard, Discrete), 
+      cols = c(Standard), 
       names_to = "Method", 
       values_to = "Running_SD"
     )
@@ -439,9 +457,9 @@ plot_data <- bind_rows(lapply(1:num_scenarios, function(i) {
 # Generate the facet plot
 ggplot(plot_data, aes(x = replicate, y = Running_SD, color = Method)) +
   geom_line(alpha = 0.8, linewidth = 1) +
-  geom_hline(aes(yintercept = 144), color = "green") +
-  facet_wrap(~Scenario, scales = "free_y") + # 'free_y' allows each density to have its own y-axis scale
-  scale_color_manual(values = c("Standard" = "blue", "Discrete" = "red")) +
+  # geom_hline(aes(yintercept = 144), color = "green") +
+  facet_wrap(~Density, scales = "free_y") + # 'free_y' allows each density to have its own y-axis scale
+  scale_color_manual(values = c("Standard" = "blue")) +
   labs(
     title = "Bootstrap Convergence (Running SD)",
     subtitle = paste("Recorded from outer loop iteration", outer_loop_reps),
@@ -463,12 +481,12 @@ ggplot(plot_data, aes(x = replicate, y = Running_SD, color = Method)) +
 
 ```{r}
 sim_summary <- sim_results |>
-  group_by(scenario) |>
+  group_by(density) |>
   summarize(
     mean_N_hat = mean(N_hat, na.rm = TRUE),
     mean_dets = mean(n_detections, na.rm = TRUE),
     true_SE = sd(N_hat, na.rm = TRUE),
-    mean_analytic_se = mean(true_analytic_se, na.rm = TRUE),
+    # mean_analytic_se = mean(true_analytic_se, na.rm = TRUE),
     mean_se_R2 = mean(se_R2, na.rm = TRUE),
     mean_se_R3 = mean(se_R3, na.rm = TRUE),
     mean_se_S1 = mean(se_S1, na.rm = TRUE),
@@ -477,10 +495,11 @@ sim_summary <- sim_results |>
     mean_se_O2 = mean(se_O2, na.rm = TRUE),
     mean_se_P2 = mean(se_P2, na.rm = TRUE),
     mean_se_P3 = mean(se_P3, na.rm = TRUE),
+    mean_se_P4 = mean(se_P4, na.rm = TRUE),
     mean_se_striplet = mean(se_striplet, na.rm = TRUE),
     mean_se_boxlet = mean(se_boxlet, na.rm = TRUE),
     mean_se_boot_std = mean(se_boot_std, na.rm = TRUE),
-    mean_se_boot_disc = mean(se_boot_disc, na.rm = TRUE)
+    # mean_se_boot_disc = mean(se_boot_disc, na.rm = TRUE)
   )
 
 print(sim_summary) |>
@@ -492,13 +511,13 @@ print(sim_summary) |>
 ```{r}
 desired_order <- c(
   "se_R2", "se_R3", "se_S1", "se_S2", "se_O1", "se_O2",
-  "se_P2", "se_P3", "se_striplet", "se_boxlet", "true_analytic_se",
-  "se_boot_std", "se_boot_disc"
+  "se_P2", "se_P3", "se_P4", "se_striplet", "se_boxlet",
+  "se_boot_std"
 )
 
 plot_dat <- sim_results |>
-  mutate(scenario = factor(scenario, levels = unique(scenario))) |>
-  group_by(scenario) |>
+  mutate(density = factor(density, levels = unique(density))) |>
+  group_by(density) |>
   mutate(true_ish_se = sd(N_hat, na.rm = TRUE)) |>
   ungroup() |>
   pivot_longer(
@@ -511,12 +530,13 @@ plot_dat <- sim_results |>
 
 ggplot(plot_dat, aes(x = name, y = value)) +
   geom_boxplot() +
-    geom_hline(aes(yintercept = 144), color = "green") +
-  geom_hline(aes(yintercept = true_ish_se), color = "red", linetype = "dashed", linewidth = 0.8) +
-  facet_wrap(~ scenario, ncol = 1, scales = "free_x", drop = FALSE) + 
+  geom_hline(data = green_lines, aes(yintercept = vals), color = "green") +
+    geom_hline(aes(yintercept = true_ish_se), color = "red", linetype = "dashed", linewidth = 0.8) +
+  
+  facet_wrap(~ density, ncol = 1, scales = "free_x", drop = FALSE) + 
   labs(
     title = "Variance Estimator Performance across Realizations",
-    subtitle = "Red Dashed = Empirical True SE",
+    subtitle = "Red Dashed = Empirical True SE | Green Solid = 10M Bootstrapped SE",
     x = "Estimator Type",
     y = "Estimated Standard Error"
   ) +
@@ -526,8 +546,8 @@ ggplot(plot_dat, aes(x = name, y = value)) +
 ## Saving
 
 ```{r}
-saveRDS(sim_results, file = here::here("Long_sim_results", "L8.rds"))
-ggsave(filename = here::here("Long_sim_results", "L8_plot.png"), width = 9, height = 10)
+saveRDS(sim_results, file = here::here("Long_sim_results", "L9.rds"))
+ggsave(filename = here::here("Long_sim_results", "L9_plot.png"), width = 9, height = 10)
 ```
 
 

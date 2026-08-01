@@ -283,6 +283,75 @@ survey_data <- function(region,
   
 }
 
+## Helper function to calculate the matrix data needed to calculate P4 estimator
+
+calculate_P4_hv_ER_var <- function(obsdata, segdata, spacing) {
+  # Count animals per point transect
+  counts <- obsdata |>
+    dplyr::group_by(Sample.Label) |>
+    dplyr::summarise(n = sum(size), .groups = 'drop')
+  
+  # Join counts to coordinates (segdata ALREADY has x, y, and Sample.Label)
+  pt_data <- segdata |>
+    dplyr::left_join(counts, by = "Sample.Label") |>
+    dplyr::mutate(n = tidyr::replace_na(n, 0))
+  
+  # Discretize coordinates into a grid matrix 
+  pt_data <- pt_data |>
+    dplyr::mutate(
+      col_idx = as.numeric(as.factor(round(x / spacing))), # lowercase x
+      row_idx = as.numeric(as.factor(round(y / spacing)))  # lowercase y
+    )
+  
+  max_col <- max(pt_data$col_idx)
+  max_row <- max(pt_data$row_idx)
+  
+  # Populate matrix with NAs (NA means outside the study region)
+  count_mat <- matrix(NA, nrow = max_row, ncol = max_col)
+  for(i in 1:nrow(pt_data)) {
+    count_mat[pt_data$row_idx[i], pt_data$col_idx[i]] <- pt_data$n[i]
+  }
+  
+  # Fewster P4.hv math
+  # Pad the matrix with NAs to prevent edge-case out-of-bounds errors
+  count_ext <- cbind(NA, count_mat, NA)
+  count_ext <- rbind(NA, count_ext, NA)
+  
+  delta.sum.hv <- 0
+  delta.nsq.sum.hv <- 0
+  
+  for (r in 1:max_row) {
+    for (c in 1:max_col) {
+      n_center <- count_mat[r, c]
+      if (is.na(n_center)) next # Skip if this grid intersection falls outside the region
+      
+      # Target the cross-neighbors in the extended matrix (+1 shift for padding)
+      xs <- c(c, c+2, c+1, c+1) # Left, Right, Center, Center
+      ys <- c(r+1, r+1, r, r+2) # Center, Center, Top, Bottom
+      
+      neighbors <- count_ext[cbind(ys, xs)]
+      neighbors <- neighbors[!is.na(neighbors)]
+      
+      # Sum the valid pairs and the squared differences
+      delta.sum.hv <- delta.sum.hv + length(neighbors)
+      delta.nsq.sum.hv <- delta.nsq.sum.hv + sum((neighbors - n_center)^2)
+    }
+  }
+  
+  # Prevent division by zero if delta.sum.hv is 0 (e.g., points too sparse)
+  if (delta.sum.hv == 0) return(NA)
+  
+  # Convert to encounter Rate variance to keep consistent with other estimators
+  # v_i represents the neighbor-derived variance of a single point
+  v_i <- delta.nsq.sum.hv / (2 * delta.sum.hv)
+  
+  # Var(ER) = v_i / Total Points
+  K <- nrow(pt_data)
+  var_ER_P4 <- v_i / K
+  
+  return(var_ER_P4)
+}
+
 ## fits a ds() model to the above survey data and stores its results
 ## represents the initial model that would be fit during a real analysis
 
@@ -294,7 +363,8 @@ fit_ds <- function(region,
                    obsdata, 
                    segdata, 
                    transect_type = points_or_lines, 
-                   truncation = trunc_dist) {
+                   truncation = trunc_dist,
+                   spacing = design_spacing) {
   
   # Fit the base model
   m1 <- ds(
@@ -473,6 +543,11 @@ fit_ds <- function(region,
     # 
     # se_P3 <- p3$dht$individuals$N$se
     
+    var_ER_P4 <- NA 
+    if (transect_type == "point" && nrow(obsdata) > 0) { 
+      var_ER_P4 <- calculate_P4_hv_ER_var(obsdata, segdata, spacing) 
+    }
+    
     nvec <- effort_data$count
     tvec <- effort_data$Effort
     
@@ -489,16 +564,20 @@ fit_ds <- function(region,
     # apply delta method to each variance
     delta_P2 <- apply_delta(var.P2, erhat_obs)
     delta_P3 <- apply_delta(var.P3, erhat_obs)
+    delta_P4 <- apply_delta(var_ER_P4, erhat_obs)
     
     analytical_variances <- list(
       var_ER_P2 = var.P2,
       var_ER_P3 = var.P3,
+      var_ER_P4 = var_ER_P4,
       
       se_N_P2 = delta_P2$se_N,
       se_N_P3 = delta_P3$se_N,
+      se_N_P4 = delta_P4$se_N,
       
       se_D_P2 = delta_P2$se_D,
-      se_D_P3 = delta_P3$se_D
+      se_D_P3 = delta_P3$se_D,
+      se_D_P4 = delta_P4$se_D
     )
   }
   
@@ -1258,196 +1337,196 @@ get_bootstrap_disc_density <- function(region,
 
 
 
+# Hybrid analytical technique from Ben
 
-
-analytic_se <- function(region,
-                        dsm_model,
-                        ds_results,
-                        transect_type,
-                        spacing,
-                        truncation,
-                        integration_spacing = min(density_grid_spacing, 
-                                                  truncation / 2),
-                        phase_grid = 20) {
-  
-  # Set up the region and integration surface
-  N_hat <- ds_results$N_hat
-  region_sf <- region@region
-  area_region <- region@area
-  bbox <- sf::st_bbox(region_sf)
-  
-  # Safely extract the exact P_a from the fitted model
-  P_a_global <- summary(ds_results$ds_model$ddf)$average.p
-  
-  surface <- dsims:::get.density.surface(
-    region = region,
-    x.space = integration_spacing,
-    y.space = integration_spacing,
-    constant = 1
-  ) |>
-    mutate(area = as.numeric(sf::st_area(geometry)))
-  
-  cell_abundance <- c(predict(
-    dsm_model,
-    newdata = sf::st_drop_geometry(surface),
-    off.set = surface$area,
-    type = "response"
-  ))
-  cell_abundance <- cell_abundance * N_hat / sum(cell_abundance)
-  
-  animal_points <- sf::st_as_sf(
-    sf::st_drop_geometry(surface),
-    coords = c("x", "y"),
-    crs = sf::st_crs(region_sf)
-  )
-  
-  # Reconstruct the fitted mrds distance likelihood
-  ddf <- ds_results$ds_model$ddf
-  theta <- ddf$par
-  ddf_object <- ddf$ds$aux$ddfobj
-  point_transect <- transect_type == "point"
-  left <- ddf$meta.data$left
-  first_profile <- seq_len(nrow(ddf_object$xmat)) == 1
-  
-  detection_model <- function(parameters) {
-    mrds:::assign.par(ddf_object, parameters)
-  }
-  
-  detection <- function(distance, parameters) {
-    mrds::detfct(
-      distance,
-      detection_model(parameters),
-      index = 1,
-      width = truncation,
-      left = left
-    )
-  }
-  
-  average_detection <- function(parameters) {
-    mrds:::integratepdf(
-      detection_model(parameters),
-      select = first_profile,
-      width = truncation,
-      int.range = c(left, truncation),
-      standardize = FALSE,
-      point = point_transect,
-      left = left
-    )
-  }
-  
-  log_distance_density <- function(distance, parameters) {
-    log(detection(distance, parameters)) -
-      log(average_detection(parameters))
-  }
-  
-  P <- average_detection(theta)
-  gradient_P <- numDeriv::grad(average_detection, theta)
-  shifts <- (seq_len(phase_grid) - 0.5) * spacing / phase_grid
-  phases <- if (point_transect) {
-    expand.grid(x = shifts, y = shifts)
-  } else {
-    data.frame(x = shifts, y = 0)
-  }
-  
-  phase_results <- data.frame(
-    Q = numeric(nrow(phases)),
-    sampled_area = numeric(nrow(phases)),
-    v_det = numeric(nrow(phases)),
-    v_loc = numeric(nrow(phases)),
-    M = numeric(nrow(phases)),
-    parameter_shift = numeric(nrow(phases))
-  )
-  phase_scores <- matrix(0, nrow = nrow(phases), ncol = length(theta))
-  
-  # Evaluate the surface integrals at every phase
-  for (j in seq_len(nrow(phases))) {
-    if (!point_transect) {
-      line_x <- seq(bbox["xmin"] + phases$x[j], bbox["xmax"], by = spacing)
-      samplers <- sf::st_sfc(
-        lapply(line_x, function(x) {
-          sf::st_linestring(matrix(
-            c(x, bbox["ymin"], x, bbox["ymax"]),
-            ncol = 2,
-            byrow = TRUE
-          ))
-        }),
-        crs = sf::st_crs(region_sf)
-      )
-      samplers <- sf::st_intersection(samplers, region_sf)
-      sampled_area <- 2 * (truncation - left) *
-        as.numeric(sum(sf::st_length(samplers)))
-    } else {
-      samplers <- expand.grid(
-        x = seq(bbox["xmin"] + phases$x[j], bbox["xmax"], by = spacing),
-        y = seq(bbox["ymin"] + phases$y[j], bbox["ymax"], by = spacing)
-      ) |>
-        sf::st_as_sf(coords = c("x", "y"), crs = sf::st_crs(region_sf))
-      samplers <- samplers[lengths(sf::st_intersects(samplers, 
-                                                     region_sf)) > 0, ]
-      sampled_area <- pi * (truncation^2 - left^2) * nrow(samplers)
-    }
-    
-    # Each animal can be encountered independently by every nearby sampler.
-    distance <- sf::st_distance(animal_points, samplers)
-    encounters <- which(distance >= left & distance <= truncation, 
-                        arr.ind = TRUE)
-    cell <- encounters[, "row"]
-    distance <- as.numeric(distance[encounters])
-    g <- detection(distance, theta)
-    weights <- cell_abundance[cell] * g
-    
-    score <- numDeriv::jacobian(
-      function(parameters) log_distance_density(distance, parameters),
-      theta
-    )
-    expected_log_likelihood <- function(parameters) {
-      sum(weights * log_distance_density(distance, parameters)) / N_hat
-    }
-    
-    Q <- sum(weights) / N_hat
-    S <- colSums(weights * score) / N_hat
-    information <- -numDeriv::hessian(expected_log_likelihood, theta)
-    b <- Q / P * solve(t(information), gradient_P)
-    influence <- drop(1 - score %*% b)
-    centre <- Q - sum(b * S)
-    estimator_scale <- area_region / (sampled_area * P_a_global)
-    conditional_mean <- numeric(length(cell_abundance))
-    encounter_mean <- rowsum(g * influence, cell)
-    conditional_mean[as.integer(rownames(encounter_mean))] <- 
-      encounter_mean[, 1]
-    
-    phase_results$Q[j] <- Q
-    phase_results$sampled_area[j] <- sampled_area
-    phase_results$v_det[j] <- estimator_scale^2 * sum(
-      cell_abundance[cell] * g * (1 - g) * influence^2
-    )
-    phase_results$v_loc[j] <- estimator_scale^2 * sum(
-      cell_abundance * (conditional_mean - centre)^2
-    )
-    phase_results$M[j] <- estimator_scale * N_hat * centre
-    phase_results$parameter_shift[j] <- sqrt(sum(solve(information, S)^2))
-    phase_scores[j, ] <- S
-  }
-  
-  variance_components <- c(
-    detection = mean(phase_results$v_det),
-    location = mean(phase_results$v_loc),
-    phase = mean(phase_results$M^2) - mean(phase_results$M)^2
-  )
-  
-  list(
-    se = sqrt(sum(variance_components)),
-    variance_components = variance_components,
-    mean_phase_abundance = mean(phase_results$M),
-    mean_phase_score = colMeans(phase_scores),
-    max_parameter_shift = max(phase_results$parameter_shift),
-    average_detection = P,
-    integration_spacing = integration_spacing,
-    integration_cells = nrow(surface),
-    cells_per_truncation = truncation / integration_spacing,
-    phase_results = phase_results
-  )
-}
+# analytic_se <- function(region,
+#                         dsm_model,
+#                         ds_results,
+#                         transect_type,
+#                         spacing,
+#                         truncation,
+#                         integration_spacing = min(density_grid_spacing, 
+#                                                   truncation / 2),
+#                         phase_grid = 20) {
+#   
+#   # Set up the region and integration surface
+#   N_hat <- ds_results$N_hat
+#   region_sf <- region@region
+#   area_region <- region@area
+#   bbox <- sf::st_bbox(region_sf)
+#   
+#   # Safely extract the exact P_a from the fitted model
+#   P_a_global <- summary(ds_results$ds_model$ddf)$average.p
+#   
+#   surface <- dsims:::get.density.surface(
+#     region = region,
+#     x.space = integration_spacing,
+#     y.space = integration_spacing,
+#     constant = 1
+#   ) |>
+#     mutate(area = as.numeric(sf::st_area(geometry)))
+#   
+#   cell_abundance <- c(predict(
+#     dsm_model,
+#     newdata = sf::st_drop_geometry(surface),
+#     off.set = surface$area,
+#     type = "response"
+#   ))
+#   cell_abundance <- cell_abundance * N_hat / sum(cell_abundance)
+#   
+#   animal_points <- sf::st_as_sf(
+#     sf::st_drop_geometry(surface),
+#     coords = c("x", "y"),
+#     crs = sf::st_crs(region_sf)
+#   )
+#   
+#   # Reconstruct the fitted mrds distance likelihood
+#   ddf <- ds_results$ds_model$ddf
+#   theta <- ddf$par
+#   ddf_object <- ddf$ds$aux$ddfobj
+#   point_transect <- transect_type == "point"
+#   left <- ddf$meta.data$left
+#   first_profile <- seq_len(nrow(ddf_object$xmat)) == 1
+#   
+#   detection_model <- function(parameters) {
+#     mrds:::assign.par(ddf_object, parameters)
+#   }
+#   
+#   detection <- function(distance, parameters) {
+#     mrds::detfct(
+#       distance,
+#       detection_model(parameters),
+#       index = 1,
+#       width = truncation,
+#       left = left
+#     )
+#   }
+#   
+#   average_detection <- function(parameters) {
+#     mrds:::integratepdf(
+#       detection_model(parameters),
+#       select = first_profile,
+#       width = truncation,
+#       int.range = c(left, truncation),
+#       standardize = FALSE,
+#       point = point_transect,
+#       left = left
+#     )
+#   }
+#   
+#   log_distance_density <- function(distance, parameters) {
+#     log(detection(distance, parameters)) -
+#       log(average_detection(parameters))
+#   }
+#   
+#   P <- average_detection(theta)
+#   gradient_P <- numDeriv::grad(average_detection, theta)
+#   shifts <- (seq_len(phase_grid) - 0.5) * spacing / phase_grid
+#   phases <- if (point_transect) {
+#     expand.grid(x = shifts, y = shifts)
+#   } else {
+#     data.frame(x = shifts, y = 0)
+#   }
+#   
+#   phase_results <- data.frame(
+#     Q = numeric(nrow(phases)),
+#     sampled_area = numeric(nrow(phases)),
+#     v_det = numeric(nrow(phases)),
+#     v_loc = numeric(nrow(phases)),
+#     M = numeric(nrow(phases)),
+#     parameter_shift = numeric(nrow(phases))
+#   )
+#   phase_scores <- matrix(0, nrow = nrow(phases), ncol = length(theta))
+#   
+#   # Evaluate the surface integrals at every phase
+#   for (j in seq_len(nrow(phases))) {
+#     if (!point_transect) {
+#       line_x <- seq(bbox["xmin"] + phases$x[j], bbox["xmax"], by = spacing)
+#       samplers <- sf::st_sfc(
+#         lapply(line_x, function(x) {
+#           sf::st_linestring(matrix(
+#             c(x, bbox["ymin"], x, bbox["ymax"]),
+#             ncol = 2,
+#             byrow = TRUE
+#           ))
+#         }),
+#         crs = sf::st_crs(region_sf)
+#       )
+#       samplers <- sf::st_intersection(samplers, region_sf)
+#       sampled_area <- 2 * (truncation - left) *
+#         as.numeric(sum(sf::st_length(samplers)))
+#     } else {
+#       samplers <- expand.grid(
+#         x = seq(bbox["xmin"] + phases$x[j], bbox["xmax"], by = spacing),
+#         y = seq(bbox["ymin"] + phases$y[j], bbox["ymax"], by = spacing)
+#       ) |>
+#         sf::st_as_sf(coords = c("x", "y"), crs = sf::st_crs(region_sf))
+#       samplers <- samplers[lengths(sf::st_intersects(samplers, 
+#                                                      region_sf)) > 0, ]
+#       sampled_area <- pi * (truncation^2 - left^2) * nrow(samplers)
+#     }
+#     
+#     # Each animal can be encountered independently by every nearby sampler.
+#     distance <- sf::st_distance(animal_points, samplers)
+#     encounters <- which(distance >= left & distance <= truncation, 
+#                         arr.ind = TRUE)
+#     cell <- encounters[, "row"]
+#     distance <- as.numeric(distance[encounters])
+#     g <- detection(distance, theta)
+#     weights <- cell_abundance[cell] * g
+#     
+#     score <- numDeriv::jacobian(
+#       function(parameters) log_distance_density(distance, parameters),
+#       theta
+#     )
+#     expected_log_likelihood <- function(parameters) {
+#       sum(weights * log_distance_density(distance, parameters)) / N_hat
+#     }
+#     
+#     Q <- sum(weights) / N_hat
+#     S <- colSums(weights * score) / N_hat
+#     information <- -numDeriv::hessian(expected_log_likelihood, theta)
+#     b <- Q / P * solve(t(information), gradient_P)
+#     influence <- drop(1 - score %*% b)
+#     centre <- Q - sum(b * S)
+#     estimator_scale <- area_region / (sampled_area * P_a_global)
+#     conditional_mean <- numeric(length(cell_abundance))
+#     encounter_mean <- rowsum(g * influence, cell)
+#     conditional_mean[as.integer(rownames(encounter_mean))] <- 
+#       encounter_mean[, 1]
+#     
+#     phase_results$Q[j] <- Q
+#     phase_results$sampled_area[j] <- sampled_area
+#     phase_results$v_det[j] <- estimator_scale^2 * sum(
+#       cell_abundance[cell] * g * (1 - g) * influence^2
+#     )
+#     phase_results$v_loc[j] <- estimator_scale^2 * sum(
+#       cell_abundance * (conditional_mean - centre)^2
+#     )
+#     phase_results$M[j] <- estimator_scale * N_hat * centre
+#     phase_results$parameter_shift[j] <- sqrt(sum(solve(information, S)^2))
+#     phase_scores[j, ] <- S
+#   }
+#   
+#   variance_components <- c(
+#     detection = mean(phase_results$v_det),
+#     location = mean(phase_results$v_loc),
+#     phase = mean(phase_results$M^2) - mean(phase_results$M)^2
+#   )
+#   
+#   list(
+#     se = sqrt(sum(variance_components)),
+#     variance_components = variance_components,
+#     mean_phase_abundance = mean(phase_results$M),
+#     mean_phase_score = colMeans(phase_scores),
+#     max_parameter_shift = max(phase_results$parameter_shift),
+#     average_detection = P,
+#     integration_spacing = integration_spacing,
+#     integration_cells = nrow(surface),
+#     cells_per_truncation = truncation / integration_spacing,
+#     phase_results = phase_results
+#   )
+# }
 
 
 
