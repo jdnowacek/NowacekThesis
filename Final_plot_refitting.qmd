@@ -3,3 +3,77 @@ title: "Final_plot_refitting"
 format: html
 ---
 
+# Packages
+
+```{r, message=FALSE}
+library(tidyverse)
+library(knitr)
+```
+
+# Import data
+
+```{r, message=FALSE}
+mcse_10M <- read_csv("mcse_10M_results.csv")
+L1 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/L1.rds")
+L2 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/L2.rds")
+L3 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/L3.rds")
+L4 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/L4.rds")
+L5 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/L5.rds")
+L6 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/L6.rds")
+L7 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/L7.rds")
+L8 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/L8.rds")
+L9 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/L9.rds")
+L10 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/L10.rds")
+```
+
+# Constants
+
+```{r}
+ten_mil_est <- mcse_10M |>
+  arrange(scenario, density_scenario) |>
+  filter(scenario == 10 & transect == "line") # change this each run
+
+green_lines <- tibble(density = c("Density 1", "Density 2", 
+                                   "Density 3", "Density 4"),
+                      vals = ten_mil_est$mc_se)
+
+sim_results <- L10
+```
+
+## Summary plot
+
+```{r}
+desired_order <- c(
+  "se_R2", "se_R3", "se_S1", "se_S2", "se_O1", "se_O2",
+  "se_P2", "se_P3", "se_P4", "se_striplet", "se_boxlet",
+  "se_boot_std"
+)
+
+plot_dat <- sim_results |>
+  mutate(density = factor(density, levels = unique(density))) |>
+  group_by(density) |>
+  mutate(true_ish_se = sd(N_hat, na.rm = TRUE)) |>
+  ungroup() |>
+  pivot_longer(
+    cols = any_of(desired_order),
+    names_to = "name",
+    values_to = "value",
+    values_drop_na = TRUE
+  ) |>
+  mutate(name = factor(name, levels = desired_order)) 
+
+ggplot(plot_dat, aes(x = name, y = value)) +
+  geom_boxplot() +
+  geom_hline(data = green_lines, aes(yintercept = vals), color = "green") +
+    geom_hline(aes(yintercept = true_ish_se), color = "red", linetype = "dashed", linewidth = 0.8) +
+  ylim(0, 100) +
+  facet_wrap(~ density, ncol = 1, scales = "free_x", drop = FALSE) + 
+  labs(
+    title = "Variance Estimator Performance across Realizations",
+    subtitle = "Red Dashed = Empirical True SE | Green Solid = 10M Bootstrapped SE",
+    x = "Estimator Type",
+    y = "Estimated Standard Error"
+  ) +
+  theme_bw()
+```
+
