@@ -34,7 +34,7 @@ mcse_10M <- read_csv("mcse_10M_results.csv")
 # Constants
 
 ```{r}
-true_N <- 644
+true_N <- 1612
 
 points_or_lines = "line"
 
@@ -51,7 +51,7 @@ bootstrap_reps <- 500
 
 ten_mil_est <- mcse_10M |>
   arrange(scenario, density_scenario) |>
-  filter(scenario == 11 & transect == "line") # change this each run
+  filter(scenario == 12 & transect == "line") # change this each run
 
 green_lines <- tibble(density = c("Density 1", "Density 2", 
                                    "Density 3", "Density 4"),
@@ -546,8 +546,8 @@ ggplot(plot_dat, aes(x = name, y = value)) +
 ## Saving
 
 ```{r}
-saveRDS(sim_results, file = here::here("Long_sim_results", "L11.rds"))
-ggsave(filename = here::here("Long_sim_results", "L11_plot.png"), width = 9, height = 10)
+saveRDS(sim_results, file = here::here("Long_sim_results", "L12.rds"))
+ggsave(filename = here::here("Long_sim_results", "L12_plot.png"), width = 9, height = 10)
 ```
 
 
