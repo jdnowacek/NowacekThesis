@@ -34,7 +34,7 @@ mcse_10M <- read_csv("mcse_10M_results.csv")
 # Constants
 
 ```{r}
-true_N <- 3240
+true_N <- 644
 
 points_or_lines = "line"
 
@@ -42,7 +42,7 @@ phase_grid_val <- 100
 
 trunc_dist <- 40
 scale_parameter <- 15
-design_spacing <- 400
+design_spacing <- 200
 
 density_grid_spacing <- 100
 
@@ -51,7 +51,7 @@ bootstrap_reps <- 500
 
 ten_mil_est <- mcse_10M |>
   arrange(scenario, density_scenario) |>
-  filter(scenario == 9 & transect == "line") # change this each run
+  filter(scenario == 11 & transect == "line") # change this each run
 
 green_lines <- tibble(density = c("Density 1", "Density 2", 
                                    "Density 3", "Density 4"),
@@ -546,8 +546,8 @@ ggplot(plot_dat, aes(x = name, y = value)) +
 ## Saving
 
 ```{r}
-saveRDS(sim_results, file = here::here("Long_sim_results", "L9.rds"))
-ggsave(filename = here::here("Long_sim_results", "L9_plot.png"), width = 9, height = 10)
+saveRDS(sim_results, file = here::here("Long_sim_results", "L11.rds"))
+ggsave(filename = here::here("Long_sim_results", "L11_plot.png"), width = 9, height = 10)
 ```
 
 
