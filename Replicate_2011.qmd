@@ -34,7 +34,7 @@ mcse_10M <- read_csv("mcse_10M_results.csv")
 # Constants
 
 ```{r}
-true_N <- 1715
+true_N <- 16975
 
 points_or_lines = "point"
 
@@ -51,7 +51,7 @@ bootstrap_reps <- 500
 
 ten_mil_est <- mcse_10M |>
   arrange(scenario, density_scenario) |>
-  filter(scenario == 7 & transect == "point") # change this each run
+  filter(scenario == 9 & transect == "point") # change this each run
 
 green_lines <- tibble(density = c("Density 1", "Density 2", 
                                    "Density 3", "Density 4"),
@@ -267,7 +267,7 @@ ggplot() +
 # Main Simulation block
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
-num_cores <- max(1, parallel::detectCores() - 2)
+num_cores <- max(1, parallel::detectCores() - 1)
 plan(multisession, workers = num_cores)
 
 num_scenarios <- length(densities)
@@ -422,53 +422,53 @@ plan(sequential)
 ## MC convergence plot
 
 ```{r}
-# Plotting Monte Carlo convergence 
-
-# Custom function to calculate cumulative SD
-cum_sd <- function(x, expected_length = bootstrap_reps) {
-  # If the array is empty, too short, or all NAs (model failed), return appropriately sized NAs
-  if (length(x) < 2 || all(is.na(x))) {
-    return(rep(NA_real_, expected_length - 1))
-  }
-  
-  # Start from 2 because you can't get an SD of a single number
-  sapply(25:length(x), function(j) sd(x[1:j], na.rm = TRUE))
-}
-
-# Build plot data dynamically by looping through the saved list of the last iteration
-plot_data <- bind_rows(lapply(1:num_scenarios, function(i) {
-  
-  boot_std <- last_rep_bootstraps[[i]]$Standard
-  # boot_disc <- last_rep_bootstraps[[i]]$Discrete
-  
-  tibble(
-    replicate = 25:bootstrap_reps,
-    Density = paste("Density", i),
-    Standard = cum_sd(boot_std)
-    # Discrete = cum_sd(boot_disc)
-  ) |> 
-    pivot_longer(
-      cols = c(Standard), 
-      names_to = "Method", 
-      values_to = "Running_SD"
-    )
-}))
-
-# Generate the facet plot
-ggplot(plot_data, aes(x = replicate, y = Running_SD, color = Method)) +
-  geom_line(alpha = 0.8, linewidth = 1) +
-  # geom_hline(aes(yintercept = 144), color = "green") +
-  facet_wrap(~Density, scales = "free_y") + # 'free_y' allows each density to have its own y-axis scale
-  scale_color_manual(values = c("Standard" = "blue")) +
-  labs(
-    title = "Bootstrap Convergence (Running SD)",
-    subtitle = paste("Recorded from outer loop iteration", outer_loop_reps),
-    x = "Bootstrap Replicate",
-    y = "Cumulative Standard Deviation (SE of N_hat)",
-    color = "Bootstrap Method"
-  ) +
-  theme_bw() +
-  theme(legend.position = "bottom")
+# # Plotting Monte Carlo convergence 
+# 
+# # Custom function to calculate cumulative SD
+# cum_sd <- function(x, expected_length = bootstrap_reps) {
+#   # If the array is empty, too short, or all NAs (model failed), return appropriately sized NAs
+#   if (length(x) < 2 || all(is.na(x))) {
+#     return(rep(NA_real_, expected_length - 1))
+#   }
+#   
+#   # Start from 2 because you can't get an SD of a single number
+#   sapply(25:length(x), function(j) sd(x[1:j], na.rm = TRUE))
+# }
+# 
+# # Build plot data dynamically by looping through the saved list of the last iteration
+# plot_data <- bind_rows(lapply(1:num_scenarios, function(i) {
+#   
+#   boot_std <- last_rep_bootstraps[[i]]$Standard
+#   # boot_disc <- last_rep_bootstraps[[i]]$Discrete
+#   
+#   tibble(
+#     replicate = 25:bootstrap_reps,
+#     Density = paste("Density", i),
+#     Standard = cum_sd(boot_std)
+#     # Discrete = cum_sd(boot_disc)
+#   ) |> 
+#     pivot_longer(
+#       cols = c(Standard), 
+#       names_to = "Method", 
+#       values_to = "Running_SD"
+#     )
+# }))
+# 
+# # Generate the facet plot
+# ggplot(plot_data, aes(x = replicate, y = Running_SD, color = Method)) +
+#   geom_line(alpha = 0.8, linewidth = 1) +
+#   # geom_hline(aes(yintercept = 144), color = "green") +
+#   facet_wrap(~Density, scales = "free_y") + # 'free_y' allows each density to have its own y-axis scale
+#   scale_color_manual(values = c("Standard" = "blue")) +
+#   labs(
+#     title = "Bootstrap Convergence (Running SD)",
+#     subtitle = paste("Recorded from outer loop iteration", outer_loop_reps),
+#     x = "Bootstrap Replicate",
+#     y = "Cumulative Standard Deviation (SE of N_hat)",
+#     color = "Bootstrap Method"
+#   ) +
+#   theme_bw() +
+#   theme(legend.position = "bottom")
 ```
 
 ```{r}
@@ -546,8 +546,8 @@ ggplot(plot_dat, aes(x = name, y = value)) +
 ## Saving
 
 ```{r}
-saveRDS(sim_results, file = here::here("Long_sim_results", "P7.rds"))
-ggsave(filename = here::here("Long_sim_results", "P7_plot.png"), width = 9, height = 10)
+saveRDS(sim_results, file = here::here("Long_sim_results", "P9.rds"))
+ggsave(filename = here::here("Long_sim_results", "P9_plot.png"), width = 9, height = 10)
 ```
 
 
