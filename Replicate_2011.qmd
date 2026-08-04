@@ -34,24 +34,24 @@ mcse_10M <- read_csv("mcse_10M_results.csv")
 # Constants
 
 ```{r}
-true_N <- 16975
+true_N <- 1282
 
-points_or_lines = "point"
+points_or_lines = "line"
 
-phase_grid_val <- 10
+phase_grid_val <- 100
 
-trunc_dist <- 200
-scale_parameter <- 70
-design_spacing <- 1291
+trunc_dist <- 40
+scale_parameter <- 15
+design_spacing <- 400
 
 density_grid_spacing <- 100
 
-outer_loop_reps <- 100
-bootstrap_reps <- 500
+outer_loop_reps <- 1
+bootstrap_reps <- 1500
 
 ten_mil_est <- mcse_10M |>
   arrange(scenario, density_scenario) |>
-  filter(scenario == 9 & transect == "point") # change this each run
+  filter(scenario == 8 & transect == "line") # change this each run
 
 green_lines <- tibble(density = c("Density 1", "Density 2", 
                                    "Density 3", "Density 4"),
@@ -267,7 +267,7 @@ ggplot() +
 # Main Simulation block
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
-num_cores <- max(1, parallel::detectCores() - 1)
+num_cores <- max(1, parallel::detectCores() - 2)
 plan(multisession, workers = num_cores)
 
 num_scenarios <- length(densities)
@@ -380,27 +380,27 @@ all_runs <- future_map(1:outer_loop_reps, function(b) {
       reps = bootstrap_reps
     )
 
-    # disc_density <- get_bootstrap_disc_density(
-    #   region = region,
-    #   population_description = dsm_results$population_description,
-    #   sigma_hat = ds_results$sigma_hat,
-    #   transect_type = points_or_lines,
-    #   reps = bootstrap_reps
-    # )
+    disc_density <- get_bootstrap_disc_density(
+      region = region,
+      population_description = dsm_results$population_description,
+      sigma_hat = ds_results$sigma_hat,
+      transect_type = points_or_lines,
+      reps = bootstrap_reps
+    )
 
     # Safely update the remaining fields
     # res_row$true_analytic_se <- analytical_se$se
     res_row$se_striplet <- spatial_variances$se_N_striplet %||% NA_real_
     res_row$se_boxlet <- spatial_variances$se_N_boxlet %||% NA_real_
     res_row$se_boot_std <- sd(standard$N_hat, na.rm = TRUE)
-    # res_row$se_boot_disc <- sd(disc_density$N_hat, na.rm = TRUE)
+    res_row$se_boot_disc <- sd(disc_density$N_hat, na.rm = TRUE)
 
     # Safely return row and arrays for plotting
     list(
       row = res_row,
       bootstraps = if (b == outer_loop_reps) {
-        list(Standard = standard$N_hat)
-             #, Discrete = disc_density$N_hat)
+        list(Standard = standard$N_hat, 
+             Discrete = disc_density$N_hat)
       } else NULL
     )
 
@@ -422,58 +422,58 @@ plan(sequential)
 ## MC convergence plot
 
 ```{r}
-# # Plotting Monte Carlo convergence 
-# 
-# # Custom function to calculate cumulative SD
-# cum_sd <- function(x, expected_length = bootstrap_reps) {
-#   # If the array is empty, too short, or all NAs (model failed), return appropriately sized NAs
-#   if (length(x) < 2 || all(is.na(x))) {
-#     return(rep(NA_real_, expected_length - 1))
-#   }
-#   
-#   # Start from 2 because you can't get an SD of a single number
-#   sapply(25:length(x), function(j) sd(x[1:j], na.rm = TRUE))
-# }
-# 
-# # Build plot data dynamically by looping through the saved list of the last iteration
-# plot_data <- bind_rows(lapply(1:num_scenarios, function(i) {
-#   
-#   boot_std <- last_rep_bootstraps[[i]]$Standard
-#   # boot_disc <- last_rep_bootstraps[[i]]$Discrete
-#   
-#   tibble(
-#     replicate = 25:bootstrap_reps,
-#     Density = paste("Density", i),
-#     Standard = cum_sd(boot_std)
-#     # Discrete = cum_sd(boot_disc)
-#   ) |> 
-#     pivot_longer(
-#       cols = c(Standard), 
-#       names_to = "Method", 
-#       values_to = "Running_SD"
-#     )
-# }))
-# 
-# # Generate the facet plot
-# ggplot(plot_data, aes(x = replicate, y = Running_SD, color = Method)) +
-#   geom_line(alpha = 0.8, linewidth = 1) +
-#   # geom_hline(aes(yintercept = 144), color = "green") +
-#   facet_wrap(~Density, scales = "free_y") + # 'free_y' allows each density to have its own y-axis scale
-#   scale_color_manual(values = c("Standard" = "blue")) +
-#   labs(
-#     title = "Bootstrap Convergence (Running SD)",
-#     subtitle = paste("Recorded from outer loop iteration", outer_loop_reps),
-#     x = "Bootstrap Replicate",
-#     y = "Cumulative Standard Deviation (SE of N_hat)",
-#     color = "Bootstrap Method"
-#   ) +
-#   theme_bw() +
-#   theme(legend.position = "bottom")
+# Plotting Monte Carlo convergence
+
+# Custom function to calculate cumulative SD
+cum_sd <- function(x, expected_length = bootstrap_reps) {
+  # If the array is empty, too short, or all NAs (model failed), return appropriately sized NAs
+  if (length(x) < 2 || all(is.na(x))) {
+    return(rep(NA_real_, expected_length - 1))
+  }
+
+  # Start from 2 because you can't get an SD of a single number
+  sapply(25:length(x), function(j) sd(x[1:j], na.rm = TRUE))
+}
+
+# Build plot data dynamically by looping through the saved list of the last iteration
+plot_data <- bind_rows(lapply(1:num_scenarios, function(i) {
+
+  boot_std <- last_rep_bootstraps[[i]]$Standard
+  boot_disc <- last_rep_bootstraps[[i]]$Discrete
+
+  tibble(
+    replicate = 25:bootstrap_reps,
+    Density = paste("Density", i),
+    Standard = cum_sd(boot_std),
+    Discrete = cum_sd(boot_disc)
+) |>
+    pivot_longer(
+      cols = c(Standard, Discrete), 
+      names_to = "Method",
+      values_to = "Running_SD"
+    )
+}))
+
+# Generate the facet plot
+ggplot(plot_data, aes(x = replicate, y = Running_SD, color = Method)) +
+  geom_line(alpha = 0.8, linewidth = 1) +
+  # geom_hline(aes(yintercept = 144), color = "green") +
+  facet_wrap(~Density, scales = "free_y") + # 'free_y' allows each density to have its own y-axis scale
+  scale_color_manual(values = c("Standard" = "blue", "Discrete" = "red")) +
+  labs(
+    title = "Line Transect Bootstrap Convergence (Running SD)",
+    # subtitle = paste("Recorded from outer loop iteration", outer_loop_reps),
+    x = "Bootstrap Replicate",
+    y = "Cumulative Standard Deviation",
+    color = "Bootstrap Method"
+  ) +
+  theme_bw() +
+  theme(legend.position = "bottom")
 ```
 
 ```{r}
-# saveRDS(plot_data, file = here::here("Long_sim_results", "convergence_results_1500.rds"))
-# ggsave(filename = here::here("Long_sim_results", "convergence_results_1500_plot.png"))
+saveRDS(plot_data, file = here::here("Long_sim_results", "convergence_results_pts_1500.rds"))
+ggsave(filename = here::here("Long_sim_results", "convergence_results_1500_plot.png"))
 ```
 
 
@@ -546,8 +546,8 @@ ggplot(plot_dat, aes(x = name, y = value)) +
 ## Saving
 
 ```{r}
-saveRDS(sim_results, file = here::here("Long_sim_results", "P9.rds"))
-ggsave(filename = here::here("Long_sim_results", "P9_plot.png"), width = 9, height = 10)
+# saveRDS(sim_results, file = here::here("Long_sim_results", "P12.rds"))
+# ggsave(filename = here::here("Long_sim_results", "P12_plot.png"), width = 9, height = 10)
 ```
 
 
