@@ -36,10 +36,10 @@ P5 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/P5.rds")
 P6 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/P6.rds")
 P7 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/P7.rds")
 P8 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/P8.rds")
-# P9 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/P9.rds")
-# P10 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/P10.rds")
-# P11 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/P11.rds")
-# P12 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/P12.rds")
+P9 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/P9.rds")
+P10 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/P10.rds")
+P11 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/P11.rds")
+P12 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/P12.rds")
 ```
 
 # Constants
@@ -92,4 +92,21 @@ ggplot(plot_dat, aes(x = name, y = value)) +
   ) +
   theme_bw()
 ```
+
+# N failures table
+
+```{r}
+# failures_by_density <- P12 |>
+#   group_by(density) |>
+#   summarize(failed_models = sum(is.na(se_boxlet)))
+# 
+# print(failures_by_density)
+```
+
+
+
+
+
+
+
 
