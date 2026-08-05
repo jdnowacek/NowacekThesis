@@ -15,31 +15,31 @@ library(knitr)
 ```{r, message=FALSE}
 mcse_10M <- read_csv("mcse_10M_results.csv")
 
-L1 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/L1.rds")
-L2 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/L2.rds")
-L3 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/L3.rds")
-L4 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/L4.rds")
-L5 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/L5.rds")
-L6 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/L6.rds")
-L7 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/L7.rds")
-L8 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/L8.rds")
-L9 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/L9.rds")
-L10 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/L10.rds")
-L11 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/L11.rds")
-L12 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/L12.rds")
+L1 <- readRDS("~/Documents/St. Andrews/Thesis/NowacekThesis/Long_sim_results/L1.rds")
+L2 <- readRDS("~/Documents/St. Andrews/Thesis/NowacekThesis/Long_sim_results/L2.rds")
+L3 <- readRDS("~/Documents/St. Andrews/Thesis/NowacekThesis/Long_sim_results/L3.rds")
+L4 <- readRDS("~/Documents/St. Andrews/Thesis/NowacekThesis/Long_sim_results/L4.rds")
+L5 <- readRDS("~/Documents/St. Andrews/Thesis/NowacekThesis/Long_sim_results/L5.rds")
+L6 <- readRDS("~/Documents/St. Andrews/Thesis/NowacekThesis/Long_sim_results/L6.rds")
+L7 <- readRDS("~/Documents/St. Andrews/Thesis/NowacekThesis/Long_sim_results/L7.rds")
+L8 <- readRDS("~/Documents/St. Andrews/Thesis/NowacekThesis/Long_sim_results/L8.rds")
+L9 <- readRDS("~/Documents/St. Andrews/Thesis/NowacekThesis/Long_sim_results/L9.rds")
+L10 <- readRDS("~/Documents/St. Andrews/Thesis/NowacekThesis/Long_sim_results/L10.rds")
+L11 <- readRDS("~/Documents/St. Andrews/Thesis/NowacekThesis/Long_sim_results/L11.rds")
+L12 <- readRDS("~/Documents/St. Andrews/Thesis/NowacekThesis/Long_sim_results/L12.rds")
 
-P1 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/P1.rds")
-P2 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/P2.rds")
-P3 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/P3.rds")
-P4 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/P4.rds")
-P5 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/P5.rds")
-P6 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/P6.rds")
-P7 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/P7.rds")
-P8 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/P8.rds")
-P9 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/P9.rds")
-P10 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/P10.rds")
-P11 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/P11.rds")
-P12 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/P12.rds")
+P1 <- readRDS("~/Documents/St. Andrews/Thesis/NowacekThesis/Long_sim_results/P1.rds")
+P2 <- readRDS("~/Documents/St. Andrews/Thesis/NowacekThesis/Long_sim_results/P2.rds")
+P3 <- readRDS("~/Documents/St. Andrews/Thesis/NowacekThesis/Long_sim_results/P3.rds")
+P4 <- readRDS("~/Documents/St. Andrews/Thesis/NowacekThesis/Long_sim_results/P4.rds")
+P5 <- readRDS("~/Documents/St. Andrews/Thesis/NowacekThesis/Long_sim_results/P5.rds")
+P6 <- readRDS("~/Documents/St. Andrews/Thesis/NowacekThesis/Long_sim_results/P6.rds")
+P7 <- readRDS("~/Documents/St. Andrews/Thesis/NowacekThesis/Long_sim_results/P7.rds")
+P8 <- readRDS("~/Documents/St. Andrews/Thesis/NowacekThesis/Long_sim_results/P8.rds")
+P9 <- readRDS("~/Documents/St. Andrews/Thesis/NowacekThesis/Long_sim_results/P9.rds")
+P10 <- readRDS("~/Documents/St. Andrews/Thesis/NowacekThesis/Long_sim_results/P10.rds")
+P11 <- readRDS("~/Documents/St. Andrews/Thesis/NowacekThesis/Long_sim_results/P11.rds")
+P12 <- readRDS("~/Documents/St. Andrews/Thesis/NowacekThesis/Long_sim_results/P12.rds")
 ```
 
 # Constants
@@ -47,18 +47,18 @@ P12 <- readRDS("~/Documents/St. Andrews/NowacekThesis/Long_sim_results/P12.rds")
 ```{r}
 ten_mil_est <- mcse_10M |>
   arrange(scenario, density_scenario) |>
-  filter(scenario == 8 & transect == "point") # change this each run
+  filter(scenario ==  12 & transect == "point") # change this each run
 
 green_lines <- tibble(density = c("Density 1", "Density 2", 
                                    "Density 3", "Density 4"),
                       vals = ten_mil_est$mc_se)
 
-sim_results <- P8
+sim_results <- P12
 ```
 
 ## Summary plot
 
-```{r}
+```{r, warning=FALSE}
 desired_order <- c(
   "se_R2", "se_R3", "se_S1", "se_S2", "se_O1", "se_O2",
   "se_P2", "se_P3", "se_P4", "se_striplet", "se_boxlet",
@@ -82,7 +82,7 @@ ggplot(plot_dat, aes(x = name, y = value)) +
   geom_boxplot() +
   geom_hline(data = green_lines, aes(yintercept = vals), color = "green") +
     geom_hline(aes(yintercept = true_ish_se), color = "red", linetype = "dashed", linewidth = 0.8) +
-  # ylim(500, 1200) +
+  ylim(600, 1500) +
   facet_wrap(~ density, ncol = 1, scales = "free_x", drop = FALSE) + 
   labs(
     title = "Variance Estimator Performance across Realizations",
@@ -92,6 +92,11 @@ ggplot(plot_dat, aes(x = name, y = value)) +
   ) +
   theme_bw()
 ```
+
+```{r}
+ggsave(filename = here::here("Long_sim_results/Exported Figures", "P12_zi.png"), width = 8, height = 9)
+```
+
 
 # N failures table
 
