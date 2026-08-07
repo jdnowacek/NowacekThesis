@@ -1,5 +1,5 @@
 ---
-title: "Final_plot_refitting"
+title: "Results_fig_bias"
 format: html
 ---
 
@@ -43,70 +43,17 @@ P11 <- readRDS("~/Documents/St. Andrews/Thesis/NowacekThesis/Long_sim_results/P1
 P12 <- readRDS("~/Documents/St. Andrews/Thesis/NowacekThesis/Long_sim_results/P12.rds")
 ```
 
-# Constants
+mutate true analytic SE column to be the value from the mcse_10M
 
-```{r}
-ten_mil_est <- mcse_10M |>
-  arrange(scenario, density_scenario) |>
-  filter(scenario ==  8 & transect == "line") # change this each run
+find bias % (or whatever relevant stat is best) from that value for the median of (O2, fewster, and bootstrap) 
+  - or just some stats
+  - some bullshit
 
-green_lines <- tibble(density = c("Density 1", "Density 2", 
-                                   "Density 3", "Density 4"),
-                      vals = ten_mil_est$mc_se)
-
-sim_results <- L8
-```
-
-## Summary plot
-
-```{r, warning=FALSE}
-desired_order <- c(
-  "se_R2", "se_R3", "se_S1", "se_S2", "se_O1", "se_O2",
-  "se_P2", "se_P3", "se_P4", "se_striplet", "se_boxlet",
-  "se_boot_std"
-)
-
-plot_dat <- sim_results |>
-  mutate(density = factor(density, levels = unique(density))) |>
-  group_by(density) |>
-  mutate(true_ish_se = sd(N_hat, na.rm = TRUE)) |>
-  ungroup() |>
-  pivot_longer(
-    cols = any_of(desired_order),
-    names_to = "name",
-    values_to = "value",
-    values_drop_na = TRUE
-  ) |>
-  mutate(name = factor(name, levels = desired_order)) 
-ggplot(plot_dat, aes(x = name, y = value)) +
-  geom_boxplot() +
-  geom_hline(data = green_lines, aes(yintercept = vals), color = "green") +
-    geom_hline(aes(yintercept = true_ish_se), color = "red", linetype = "dashed", linewidth = 0.8) +
-  ylim(50, 250) +
-  facet_wrap(~ density, ncol = 1, scales = "free_x", drop = FALSE) + 
-  labs(
-    title = "Variance Estimator Performance across Realizations",
-    subtitle = "Red Dashed = Empirical True SE | Green Solid = 10M Bootstrapped SE",
-    x = "Estimator Type",
-    y = "Estimated Standard Error"
-  ) +
-  theme_bw()
-```
-
-```{r}
-# ggsave(filename = here::here("Long_sim_results/Exported Figures", "P12_zi.png"), width = 8, height = 9)
-```
+Find a way to put them all in a talbe that doesnt look too shite
 
 
-# N failures table
 
-```{r}
-# failures_by_density <- P12 |>
-#   group_by(density) |>
-#   summarize(failed_models = sum(is.na(se_boxlet)))
-# 
-# print(failures_by_density)
-```
+
 
 
 
