@@ -45,11 +45,319 @@ P12 <- readRDS("~/Documents/St. Andrews/Thesis/NowacekThesis/Long_sim_results/P1
 
 mutate true analytic SE column to be the value from the mcse_10M
 
+```{r}
+mcse_10M <- mcse_10M |>
+  mutate(density_scenario = case_when(
+    density_scenario == "1" ~ "Density 1",
+    density_scenario == "2" ~ "Density 2",
+    density_scenario == "3" ~ "Density 3",
+    density_scenario == "4" ~ "Density 4",
+  ))
+```
+
+## Lines
+
+
+```{r}
+L1 <- L1 |>
+  select(-true_analytic_se) |>
+  left_join(
+    mcse_10M |> 
+      filter(transect == "line", scenario == 1) |> 
+      select(density_scenario, MC_10M_est = mc_se), 
+    by = c("density" = "density_scenario")
+  )
+
+L2 <- L2 |>
+  select(-true_analytic_se) |>
+  left_join(
+    mcse_10M |> 
+      filter(transect == "line", scenario == 2) |> 
+      select(density_scenario, MC_10M_est = mc_se), 
+    by = c("density" = "density_scenario")
+  )
+
+L3 <- L3 |>
+  select(-true_analytic_se) |>
+  left_join(
+    mcse_10M |> 
+      filter(transect == "line", scenario == 3) |> 
+      select(density_scenario, MC_10M_est = mc_se), 
+    by = c("density" = "density_scenario")
+  )
+
+L4 <- L4 |>
+  select(-true_analytic_se) |>
+  left_join(
+    mcse_10M |> 
+      filter(transect == "line", scenario == 4) |> 
+      select(density_scenario, MC_10M_est = mc_se), 
+    by = c("density" = "density_scenario")
+  )
+
+L5 <- L5 |>
+  select(-true_analytic_se) |>
+  left_join(
+    mcse_10M |> 
+      filter(transect == "line", scenario == 5) |> 
+      select(density_scenario, MC_10M_est = mc_se), 
+    by = c("density" = "density_scenario")
+  )
+
+L6 <- L6 |>
+  select(-true_analytic_se) |>
+  left_join(
+    mcse_10M |> 
+      filter(transect == "line", scenario == 6) |> 
+      select(density_scenario, MC_10M_est = mc_se), 
+    by = c("density" = "density_scenario")
+  )
+
+L7 <- L7 |>
+  select(-true_analytic_se) |>
+  left_join(
+    mcse_10M |> 
+      filter(transect == "line", scenario == 7) |> 
+      select(density_scenario, MC_10M_est = mc_se), 
+    by = c("density" = "density_scenario")
+  )
+
+L8 <- L8 |>
+  select(-true_analytic_se) |>
+  left_join(
+    mcse_10M |> 
+      filter(transect == "line", scenario == 8) |> 
+      select(density_scenario, MC_10M_est = mc_se), 
+    by = c("density" = "density_scenario")
+  )
+
+L9 <- L9 |>
+  select(-true_analytic_se) |>
+  left_join(
+    mcse_10M |> 
+      filter(transect == "line", scenario == 9) |> 
+      select(density_scenario, MC_10M_est = mc_se), 
+    by = c("density" = "density_scenario")
+  )
+
+L10 <- L10 |>
+  select(-true_analytic_se) |>
+  left_join(
+    mcse_10M |> 
+      filter(transect == "line", scenario == 10) |> 
+      select(density_scenario, MC_10M_est = mc_se), 
+    by = c("density" = "density_scenario")
+  )
+
+L11 <- L11 |>
+  select(-true_analytic_se) |>
+  left_join(
+    mcse_10M |> 
+      filter(transect == "line", scenario == 11) |> 
+      select(density_scenario, MC_10M_est = mc_se), 
+    by = c("density" = "density_scenario")
+  )
+
+L12 <- L12 |>
+  select(-true_analytic_se) |>
+  left_join(
+    mcse_10M |> 
+      filter(transect == "line", scenario == 12) |> 
+      select(density_scenario, MC_10M_est = mc_se), 
+    by = c("density" = "density_scenario")
+  )
+```
+
+## Points
+
+```{r}
+P1 <- P1 |>
+  select(-true_analytic_se) |>
+  left_join(
+    mcse_10M |> 
+      filter(transect == "point", scenario == 1) |> 
+      select(density_scenario, MC_10M_est = mc_se), 
+    by = c("density" = "density_scenario")
+  )
+
+P2 <- P2 |>
+  select(-true_analytic_se) |>
+  left_join(
+    mcse_10M |> 
+      filter(transect == "point", scenario == 2) |> 
+      select(density_scenario, MC_10M_est = mc_se), 
+    by = c("density" = "density_scenario")
+  )
+
+P3 <- P3 |>
+  select(-true_analytic_se) |>
+  left_join(
+    mcse_10M |> 
+      filter(transect == "point", scenario == 3) |> 
+      select(density_scenario, MC_10M_est = mc_se), 
+    by = c("density" = "density_scenario")
+  )
+
+P4 <- P4 |>
+  select(-true_analytic_se) |>
+  left_join(
+    mcse_10M |> 
+      filter(transect == "point", scenario == 4) |> 
+      select(density_scenario, MC_10M_est = mc_se), 
+    by = c("density" = "density_scenario")
+  )
+
+P5 <- P5 |>
+  select(-true_analytic_se) |>
+  left_join(
+    mcse_10M |> 
+      filter(transect == "point", scenario == 5) |> 
+      select(density_scenario, MC_10M_est = mc_se), 
+    by = c("density" = "density_scenario")
+  )
+
+P6 <- P6 |>
+  select(-true_analytic_se) |>
+  left_join(
+    mcse_10M |> 
+      filter(transect == "point", scenario == 6) |> 
+      select(density_scenario, MC_10M_est = mc_se), 
+    by = c("density" = "density_scenario")
+  )
+
+P7 <- P7 |>
+  select(-true_analytic_se) |>
+  left_join(
+    mcse_10M |> 
+      filter(transect == "point", scenario == 7) |> 
+      select(density_scenario, MC_10M_est = mc_se), 
+    by = c("density" = "density_scenario")
+  )
+
+P8 <- P8 |>
+  select(-true_analytic_se) |>
+  left_join(
+    mcse_10M |> 
+      filter(transect == "point", scenario == 8) |> 
+      select(density_scenario, MC_10M_est = mc_se), 
+    by = c("density" = "density_scenario")
+  )
+
+P9 <- P9 |>
+  select(-true_analytic_se) |>
+  left_join(
+    mcse_10M |> 
+      filter(transect == "point", scenario == 9) |> 
+      select(density_scenario, MC_10M_est = mc_se), 
+    by = c("density" = "density_scenario")
+  )
+
+P10 <- P10 |>
+  select(-true_analytic_se) |>
+  left_join(
+    mcse_10M |> 
+      filter(transect == "point", scenario == 10) |> 
+      select(density_scenario, MC_10M_est = mc_se), 
+    by = c("density" = "density_scenario")
+  )
+
+P11 <- P11 |>
+  select(-true_analytic_se) |>
+  left_join(
+    mcse_10M |> 
+      filter(transect == "point", scenario == 11) |> 
+      select(density_scenario, MC_10M_est = mc_se), 
+    by = c("density" = "density_scenario")
+  )
+
+P12 <- P12 |>
+  select(-true_analytic_se) |>
+  left_join(
+    mcse_10M |> 
+      filter(transect == "point", scenario == 12) |> 
+      select(density_scenario, MC_10M_est = mc_se), 
+    by = c("density" = "density_scenario")
+  )
+```
+
 find bias % (or whatever relevant stat is best) from that value for the median of (O2, fewster, and bootstrap) 
   - or just some stats
-  - some bullshit
+  
+```{r}
+# Bundle all dataframes into a named list
+scenario_list <- list(
+  "L1" = L1, "L2" = L2, "L3" = L3, "L4" = L4,
+  "L5" = L5, "L6" = L6, "L7" = L7, "L8" = L8,
+  "L9" = L9, "L10" = L10, "L11" = L11, "L12" = L12
+)
 
-Find a way to put them all in a talbe that doesnt look too shite
+# Map over the list and create a master summary table
+summary_table <- bind_rows(scenario_list, .id = "Scenario") |>
+  group_by(Scenario, density) |>
+  summarize(
+    # The baseline SE est
+    MC_true = first(MC_10M_est),
+    
+    # O2 Metrics
+    O2_bias = (median(se_O2, na.rm = TRUE) - MC_true) / MC_true * 100,
+    O2_sd   = sd(se_O2, na.rm = TRUE),
+    
+    # Hybrid Analytical (formerly striplets) Metrics
+    Hybrid_bias = (median(se_striplet, na.rm = TRUE) - MC_true) / MC_true * 100,
+    Hybrid_sd   = sd(se_striplet, na.rm = TRUE),
+    
+    # Bootstrap Metrics
+    Boot_bias = (median(se_boot_std, na.rm = TRUE) - MC_true) / MC_true * 100,
+    Boot_sd   = sd(se_boot_std, na.rm = TRUE),
+    
+    .groups = "drop"
+  ) |>
+  # Ensure the scenarios stay in numerical order, not alphabetical
+  mutate(Scenario = factor(Scenario, levels = paste0("L", 1:12))) |>
+  arrange(Scenario, density)
+
+# View your final formatted numbers
+kable(summary_table, digits = 3)
+```
+
+
+```{r}
+# Bundle all dataframes into a named list
+scenario_list_pts <- list(
+  "P1" = P1, "P2" = P2, "P3" = P3, "P4" = P4,
+  "P5" = P5, "P6" = P6, "P7" = P7, "P8" = P8,
+  "P9" = P9, "P10" = P10, "P11" = P11, "P12" = P12
+)
+
+# Map over the list and create a master summary table
+summary_table_pts <- bind_rows(scenario_list_pts, .id = "Scenario") |>
+  group_by(Scenario, density) |>
+  summarize(
+    # The baseline SE est
+    MC_true = first(MC_10M_est),
+    
+    # P4 Metrics
+    P4_bias = (median(se_P4, na.rm = TRUE) - MC_true) / MC_true * 100,
+    P4_sd   = sd(se_P4, na.rm = TRUE),
+    
+    # Hybrid Analytical (formerly boxlets) Metrics
+    Hybrid_bias = (median(se_boxlet, na.rm = TRUE) - MC_true) / MC_true * 100,
+    Hybrid_sd   = sd(se_boxlet, na.rm = TRUE),
+    
+    # Bootstrap Metrics
+    Boot_bias = (median(se_boot_std, na.rm = TRUE) - MC_true) / MC_true * 100,
+    Boot_sd   = sd(se_boot_std, na.rm = TRUE),
+    
+    .groups = "drop"
+  ) |>
+  # Ensure the scenarios stay in numerical order, not alphabetical
+  mutate(Scenario = factor(Scenario, levels = paste0("P", 1:12))) |>
+  arrange(Scenario, density)
+
+# View your final formatted numbers
+kable(summary_table_pts, digits = 3)
+```
+
 
 
 
