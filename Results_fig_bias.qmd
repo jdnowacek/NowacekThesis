@@ -359,6 +359,10 @@ kable(summary_table_pts, digits = 3)
 ```
 
 
+```{r}
+# write_csv2(summary_table, file = "sum_table_lines")
+# write_csv2(summary_table_pts, file = "sum_table_points")
+```
 
 
 
