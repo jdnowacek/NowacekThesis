@@ -188,41 +188,8 @@ test_analyses <- make.ds.analysis(dfmodel = ~ 1,
                                   truncation = trunc_dist,
                                   criteria = "AIC")
 
-# test_sim <- make.simulation(reps = 3,
-#                             design = test_design,
-#                             population.description = test_population_description,
-#                             detectability = test_detectability,
-#                             ds.analysis = test_analyses)
-# 
-# # Generate a single instance of a survey: a population, set of transects
-# # and the resulting distance data
-# test_survey <- run.survey(test_sim)
 
-# # 1. Extract the spatial objects and distance data from your custom lists
-# pop_df <- test_sim_truth$population@population 
-# trans_sf <- test_survey$transects@samplers
-# obs_df <- test_survey$dist_data
-# 
-# # 2. Flag detected animals AND convert the raw x/y coordinates to spatial sf points
-# pop_sf <- pop_df |> 
-#   mutate(Status = if_else(as.character(individual) %in% as.character(obs_df$object), 
-#                           "Detected", "Missed")) |> 
-#   st_as_sf(coords = c("x", "y"), crs = st_crs(test_region@region)) # Convert to sf for ggplot
-# 
-# # 3. Build the plot
-# ggplot() +
-#   geom_sf(data = test_region@region, fill = "white", color = "black", linewidth = 0.5) +
-#   geom_sf(data = trans_sf, color = "blue", linewidth = 0.8) +
-#   geom_sf(data = pop_sf, aes(color = Status), size = 1.2) +
-#   scale_color_manual(values = c("Detected" = "red", "Missed" = "grey80")) +
-#   theme_minimal() +
-#   labs(
-#     title = "Simulated Survey with Detections",
-#     subtitle = paste("Detected:", nrow(obs_df), "of", nrow(pop_sf)),
-#     color = "Animal Status"
-#   )
-
-# 1. Extract the spatial objects and distance data from your custom lists
+# Extract the spatial objects and distance data from custom lists
 pop_df <- test_sim_truth$population@population 
 trans_sf <- test_survey$transects@samplers
 
@@ -230,9 +197,7 @@ trans_sf <- test_survey$transects@samplers
 obs_df <- test_survey$dist_data |> 
   filter(!is.na(distance))
 
-# 2. Flag detected animals by matching their exact spatial coordinates
-# Since dsims overrides the 'object' ID with a sequential observation index,
-# we cross-reference the x and y coordinates to find the exact animals.
+# Flag detected animals by matching their exact spatial coordinates
 pop_sf <- pop_df |> 
   mutate(
     Status = if_else(
@@ -243,7 +208,6 @@ pop_sf <- pop_df |>
   ) |> 
   st_as_sf(coords = c("x", "y"), crs = st_crs(test_region@region))
 
-# 3. Build the plot
 ggplot() +
   geom_sf(data = test_region@region, fill = "white", color = "black", linewidth = 0.5) +
   geom_sf(data = trans_sf, color = "blue", linewidth = 0.8) +
@@ -293,7 +257,7 @@ all_runs <- future_map(1:outer_loop_reps, function(b) {
     
     n_det <- nrow(survey_results$obsdata)
 
-    # Pre-build a baseline NA row. If models fail, we instantly return this.
+    # Pre-build a baseline NA row. If models fail, instantly return this.
     res_row <- tibble(
       iteration = b, density = paste("Density", i),
       N_hat = NA_real_, n_detections = n_det, true_analytic_se = NA_real_,
@@ -305,7 +269,7 @@ all_runs <- future_map(1:outer_loop_reps, function(b) {
     # Pre-build padding for the convergence plot in case this iteration fails
     boot_padding <- if (b == outer_loop_reps) list(Standard = rep(NA_real_, bootstrap_reps), Discrete = rep(NA_real_, bootstrap_reps)) else NULL
 
-    # 2. Fit ds() - Circuit Breaker 1
+    # Fit ds() 
     ds_results <- try(fit_ds(
       region = region,
       dist_data = survey_results$dist_data,
@@ -316,12 +280,10 @@ all_runs <- future_map(1:outer_loop_reps, function(b) {
       spacing = design_spacing
     ), silent = TRUE)
 
-    # If ds() crashes (too few detections), abort and jump to next iteration
     if (inherits(ds_results, "try-error") || is.null(ds_results)) {
       return(list(row = res_row, bootstraps = boot_padding))
     }
 
-    # If ds() succeeds, lock in EVERYTHING we know so far immediately!
     res_row$N_hat <- ds_results$N_hat
     res_row$se_R2 <- ds_results$analytical_variances$se_N_R2 %||% NA_real_
     res_row$se_R3 <- ds_results$analytical_variances$se_N_R3 %||% NA_real_
@@ -333,7 +295,7 @@ all_runs <- future_map(1:outer_loop_reps, function(b) {
     res_row$se_P3 <- ds_results$analytical_variances$se_N_P3 %||% NA_real_
     res_row$se_P4 <- ds_results$analytical_variances$se_N_P4 %||% NA_real_
 
-    # 3. Fit dsm() - Circuit Breaker 2
+    # Fit dsm() 
     dsm_results <- try(fit_dsm_and_surface(
       obsdata = survey_results$obsdata,
       segdata = survey_results$segdata,
@@ -350,7 +312,6 @@ all_runs <- future_map(1:outer_loop_reps, function(b) {
       return(list(row = res_row, bootstraps = boot_padding))
     }
 
-    # 4. If we reach here, models fit perfectly. Run analytical and bootstrap math normally.
     # analytical_se <- analytic_se(
     #   region = region,
     #   dsm_model = dsm_results$dsm,
@@ -388,14 +349,12 @@ all_runs <- future_map(1:outer_loop_reps, function(b) {
       reps = bootstrap_reps
     )
 
-    # Safely update the remaining fields
-    # res_row$true_analytic_se <- analytical_se$se
+        # res_row$true_analytic_se <- analytical_se$se
     res_row$se_striplet <- spatial_variances$se_N_striplet %||% NA_real_
     res_row$se_boxlet <- spatial_variances$se_N_boxlet %||% NA_real_
     res_row$se_boot_std <- sd(standard$N_hat, na.rm = TRUE)
     res_row$se_boot_disc <- sd(disc_density$N_hat, na.rm = TRUE)
 
-    # Safely return row and arrays for plotting
     list(
       row = res_row,
       bootstraps = if (b == outer_loop_reps) {
@@ -422,9 +381,7 @@ plan(sequential)
 ## MC convergence plot
 
 ```{r}
-# Plotting Monte Carlo convergence
-
-# Custom function to calculate cumulative SD
+# function to calculate cumulative SD
 cum_sd <- function(x, expected_length = bootstrap_reps) {
   # If the array is empty, too short, or all NAs (model failed), return appropriately sized NAs
   if (length(x) < 2 || all(is.na(x))) {
